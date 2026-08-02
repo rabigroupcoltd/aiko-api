@@ -1,0 +1,514 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  RIDER
+  ADMIN
+}
+
+/// How the account was established. Firebase accounts never have a password;
+/// PASSWORD accounts are seeded staff and never carry a firebaseUid.
+enum AuthProvider {
+  FIREBASE_GOOGLE
+  FIREBASE_PHONE
+  PASSWORD
+}
+
+/// What the user picked on the UserType screen. Null until they choose.
+enum AccountType {
+  PASSENGER
+  RIDER
+}
+
+/// Mirrors the Aiko onboarding stack, one value per screen the user must clear.
+/// Stored as the client's breadcrumb; the authoritative resume point is derived
+/// from data presence — see OnboardingService.resolveStep.
+///
+/// The last two are rider-only. RIDER_DOCS is the vehicle registration itself,
+/// and AWAITING_APPROVAL is the wait for an admin to clear the KYC — a real
+/// screen the driver sits on, not an internal state.
+enum OnboardingStep {
+  PHONE
+  PROFILE
+  PHOTO
+  LIVENESS
+  USER_TYPE
+  RIDER_DOCS
+  AWAITING_APPROVAL
+  DONE
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum TransactionType {
+  RIDE_EARNINGS
+  PLATFORM_FEE
+  WITHDRAWAL
+  DEBT_PAYMENT
+  ADJUSTMENT
+}
+
+enum VehicleType {
+  CAR
+  BIKE
+  TRUCK
+  TRICYCLE
+  BICYCLE
+}
+
+enum StorageProvider {
+  LOCAL
+  CLOUDINARY
+  S3
+  CLOUDFLARE_R2
+}
+
+/// Which FCM transport a registration token belongs to. Only ANDROID is
+/// exercised today; the others are here so a token from a future build does not
+/// need a migration to be stored.
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+enum VehiclePhotoType {
+  FRONT
+  BACK
+  SIDE
+  INTERIOR
+  PLATE_NUMBER
+  OTHER
+}
+
+enum RideRequestStatus {
+  PENDING
+  MATCHED
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum BidStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model User {
+  id String @id @default(uuid())
+
+  /// Null for phone-only accounts — Firebase phone auth carries no email.
+  email String? @unique
+  /// Null for every Firebase account. Only seeded staff have one, which is what
+  /// keeps password login effectively admin-only.
+  password String?
+  /// Firebase `uid`. The primary key we match on when a token comes back.
+  firebaseUid String? @unique
+
+  authProvider  AuthProvider @default(PASSWORD)
+  emailVerified Boolean      @default(false)
+  phoneVerified Boolean      @default(false)
+
+  /// Display name. Derived from firstName + lastName once the profile step is
+  /// done; before that it is whatever the identity provider supplied, or null.
+  name      String?
+  firstName String?
+  lastName  String?
+  /// Null until the phone step. Not unique — two Firebase identities can point
+  /// at one number before they are merged, and a hard constraint would 500.
+  phone String?
+  dob   DateTime?
+  /// Avatar from the identity provider, distinct from the liveness selfie.
+  photoUrl String?
+
+  roles UserRole[]
+
+  // ------------------------------------------------------------- onboarding
+  accountType           AccountType?
+  onboardingStep        OnboardingStep @default(PHONE)
+  onboardingCompletedAt DateTime?
+  /// The selfie captured on the ProfilePhoto screen.
+  profilePhotoUrl String?
+  profilePhotoKey String?
+  livenessPassedAt DateTime?
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  driver       Driver?
+  orders       Order[]       @relation("UserOrders")
+  addresses    Address[]
+  rideRequests RideRequest[]
+  messages     RideMessage[]
+  ratingsGiven RideRating[]  @relation("RatingsGiven")
+  deviceTokens DeviceToken[]
+}
+
+/// Where to send a push. One row per app install, not per user: a handset that
+/// changes hands re-registers the same token under the new account, which is why
+/// `token` is unique globally rather than per user — the old owner must stop
+/// receiving that device's notifications the moment somebody else signs in on it.
+model DeviceToken {
+  id       String         @id @default(uuid())
+  userId   String
+  /// The FCM registration token.
+  token    String         @unique
+  platform DevicePlatform @default(ANDROID)
+  /// Stable per install, so a token rotation can replace the previous row for
+  /// the same handset instead of leaving a dead one behind.
+  deviceId   String?
+  deviceName String?
+  appVersion String?
+  /// Last time FCM accepted a message for this token. Null until the first send.
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+model Driver {
+  id                 String      @id @default(uuid())
+  userId             String      @unique
+  vehicleType        VehicleType
+  vehiclePlate       String
+  vehicleModel       String
+  vehicleColor       String?
+  vehicleYear        Int?
+  kycStatus          KycStatus   @default(PENDING)
+  kycRejectionReason String?
+  isAvailable        Boolean     @default(false)
+  isBlocked          Boolean     @default(false)
+  debtLimit          Float       @default(10000)
+  currentDebt        Float       @default(0)
+  rating             Float       @default(5.0)
+  ratingCount        Int         @default(0)
+  totalTrips         Int         @default(0)
+  acceptedTrips      Int         @default(0)
+  cancelledTrips     Int         @default(0)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  user          User                @relation(fields: [userId], references: [id])
+  wallet        DriverWallet?
+  orders        Order[]             @relation("DriverOrders")
+  transactions  LedgerTransaction[]
+  vehiclePhotos VehiclePhoto[]
+  location      DriverLocation?
+  bids          RideBid[]
+
+  @@index([vehicleType, isAvailable, kycStatus])
+}
+
+model VehiclePhoto {
+  id        String           @id @default(uuid())
+  driverId  String
+  type      VehiclePhotoType @default(OTHER)
+  url       String
+  key       String
+  provider  StorageProvider
+  mimeType  String?
+  sizeBytes Int?
+  createdAt DateTime         @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId])
+  @@map("vehicle_photos")
+}
+
+model DriverLocation {
+  driverId       String   @id
+  latitude       Float
+  longitude      Float
+  heading        Float?
+  speedKph       Float?
+  accuracyMeters Float?
+  recordedAt     DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([latitude, longitude])
+  @@map("driver_locations")
+}
+
+model PricingRule {
+  id                 String      @id @default(uuid())
+  vehicleType        VehicleType @unique
+  baseFare           Float       @default(0)
+  perKm              Float       @default(0)
+  perMinute          Float       @default(0)
+  minimumFare        Float       @default(0)
+  bookingFee         Float       @default(0)
+  surgeMultiplier    Float       @default(1)
+  /// Used to turn distance into an ETA — a bicycle and a car quote very differently.
+  avgSpeedKph        Float       @default(25)
+  platformFeePercent Float       @default(10)
+  currency           String      @default("NGN")
+  isActive           Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@map("pricing_rules")
+}
+
+model Address {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String?
+  address   String
+  latitude  Float?
+  longitude Float?
+  placeId   String?
+  source    String   @default("CACHED")
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([address, userId])
+  @@index([latitude, longitude])
+  @@index([placeId])
+  @@map("addresses")
+}
+
+/// Shared gazetteer of places resolved from the Places API. Keeping it separate
+/// from Address means a lookup by one user warms the cache for everyone without
+/// polluting anybody's saved-address list.
+model PlaceCache {
+  id          String   @id @default(uuid())
+  placeId     String?  @unique
+  name        String
+  address     String   @unique
+  latitude    Float
+  longitude   Float
+  searchCount Int      @default(1)
+  /// landmark | market | campus | hospital | transport | government | residential.
+  /// Only set for seeded places; rows written back from the Places API have none.
+  category String?
+  /// Lower-cased name, local aliases and area, joined for matching.
+  ///
+  /// Exists so "kasuwa" finds Minna Central Market. Postgres cannot pattern-match
+  /// inside a text[] without unnest, and folding the aliases into one column keeps
+  /// the search a plain Prisma query rather than raw SQL.
+  searchText String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([latitude, longitude])
+  @@map("place_cache")
+}
+
+model RideRequest {
+  id               String            @id @default(uuid())
+  userId           String
+  vehicleType      VehicleType
+  pickupLocation   String
+  dropoffLocation  String
+  pickupLat        Float
+  pickupLng        Float
+  dropoffLat       Float
+  dropoffLng       Float
+  distanceKm       Float             @default(0)
+  durationMins     Float             @default(0)
+  estimatedFare    Float             @default(0)
+  paymentMethod    PaymentMethod     @default(CASH)
+  status           RideRequestStatus @default(PENDING)
+  expiresAt        DateTime
+  matchedDriverIds String[]
+  orderId          String?           @unique
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order?    @relation(fields: [orderId], references: [id])
+  bids  RideBid[]
+
+  @@index([status, createdAt])
+  @@map("ride_requests")
+}
+
+model RideBid {
+  id        String    @id @default(uuid())
+  requestId String
+  driverId  String
+  amount    Float
+  note      String?
+  status    BidStatus @default(PENDING)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  request RideRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  driver  Driver      @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, driverId])
+  @@index([requestId, status])
+  @@map("ride_bids")
+}
+
+model Order {
+  id                 String        @id @default(uuid())
+  userId             String
+  driverId           String?
+  vehicleType        VehicleType
+  pickupLocation     String
+  dropoffLocation    String
+  pickupLat          Float
+  pickupLng          Float
+  dropoffLat         Float
+  dropoffLng         Float
+  distanceKm         Float         @default(0)
+  durationMins       Float         @default(0)
+  fare               Float
+  currency           String        @default("NGN")
+  pricingSnapshot    Json?
+  status             OrderStatus   @default(PENDING)
+  paymentMethod      PaymentMethod
+  paymentStatus      PaymentStatus @default(PENDING)
+  platformFee        Float         @default(0)
+  driverEarnings     Float         @default(0)
+  cancellationReason String?
+  acceptedAt         DateTime?
+  arrivedAt          DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  user        User          @relation("UserOrders", fields: [userId], references: [id])
+  driver      Driver?       @relation("DriverOrders", fields: [driverId], references: [id])
+  rideRequest RideRequest?
+  messages    RideMessage[]
+  ratings     RideRating[]
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@index([driverId, createdAt])
+}
+
+model RideMessage {
+  id        String    @id @default(uuid())
+  orderId   String
+  senderId  String
+  content   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sender User  @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("ride_messages")
+}
+
+model RideRating {
+  id        String   @id @default(uuid())
+  orderId   String
+  raterId   String
+  rateeId   String
+  score     Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  rater User  @relation("RatingsGiven", fields: [raterId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, raterId])
+  @@index([rateeId])
+  @@map("ride_ratings")
+}
+
+model DriverWallet {
+  id               String   @id @default(uuid())
+  driverId         String   @unique
+  totalEarnings    Float    @default(0)
+  totalWithdrawals Float    @default(0)
+  totalDebt        Float    @default(0)
+  availableBalance Float    @default(0)
+  pendingBalance   Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id])
+}
+
+model LedgerTransaction {
+  id           String          @id @default(uuid())
+  driverId     String
+  type         TransactionType
+  amount       Float
+  balanceAfter Float
+  reference    String
+  description  String
+  createdAt    DateTime        @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@index([driverId, createdAt])
+}
+
+model PlatformSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AnalyticsSnapshot {
+  id               String   @id @default(uuid())
+  date             DateTime @unique
+  totalUsers       Int      @default(0)
+  totalDrivers     Int      @default(0)
+  activeDrivers    Int      @default(0)
+  totalOrders      Int      @default(0)
+  completedOrders  Int      @default(0)
+  cancelledOrders  Int      @default(0)
+  cashRevenue      Float    @default(0)
+  transferRevenue  Float    @default(0)
+  platformEarnings Float    @default(0)
+  outstandingDebt  Float    @default(0)
+  createdAt        DateTime @default(now())
+}
