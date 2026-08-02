@@ -46,6 +46,7 @@ import {
 } from '../common/swagger/examples';
 import { MAX_VEHICLE_PHOTOS, imageFilePipe, imageUploadOptions } from '../common/upload';
 import { DriverLocationDto, NearbyDriversQueryDto } from '../redis/dto/driver-location.dto';
+import { UploadFile } from '../storage/storage.types';
 import { DriversService } from './drivers.service';
 import {
   BlockDriverDto,
@@ -95,7 +96,12 @@ export class DriversController {
   async register(
     @CurrentUser('sub') userId: string,
     @Body() dto: RegisterDriverDto,
-    @UploadedFiles(imageFilePipe) photos?: Express.Multer.File[],
+    // `UploadFile`, not `Express.Multer.File`: the latter is an ambient global
+    // that only exists when @types/multer is installed, and those are dev
+    // dependencies — a production install drops them and the build fails here
+    // with "Cannot find namespace 'Express'". Our own interface describes the
+    // exact subset this forwards to the service, so nothing is lost.
+    @UploadedFiles(imageFilePipe) photos?: UploadFile[],
   ) {
     try {
       const result = await this.driversService.register(userId, dto, photos ?? []);
@@ -269,7 +275,7 @@ export class DriversController {
     @Param('id') id: string,
     @Body() dto: UploadVehiclePhotosDto,
     @CurrentUser() user: JwtUser,
-    @UploadedFiles(imageFilePipe) photos?: Express.Multer.File[],
+    @UploadedFiles(imageFilePipe) photos?: UploadFile[],
   ) {
     try {
       const result = await this.driversService.addPhotos(id, photos ?? [], dto.photoTypes, user);
