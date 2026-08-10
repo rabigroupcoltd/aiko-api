@@ -39,7 +39,144 @@ export class RideNotificationsService implements OnModuleInit {
     this.subscribe('order.message', (payload) => this.onMessage(payload));
     this.subscribe('driver.kyc-updated', (payload) => this.onKycUpdated(payload));
 
+    // Marketplace
+    this.subscribe('order.available', (payload) => this.onOrderAvailable(payload));
+    this.subscribe('order.reserved', (payload) => this.onOrderReserved(payload));
+    this.subscribe('order.picked-up', (payload) => this.onOrderPickedUp(payload));
+    this.subscribe('order.delivered', (payload) => this.onOrderDelivered(payload));
+    this.subscribe('order.no-driver-found', (payload) => this.onNoDriverFound(payload));
+
     this.logger.log('Ride push notifications wired');
+  }
+
+  // ---------------------------------------------------------- marketplace
+
+  /**
+   * A new order, to the drivers within the current ring.
+   *
+   * Redacted the same way the grid is: the notification names a place and a
+   * price, never a customer.
+   */
+  private async onOrderAvailable(payload: {
+    order: any;
+    drivers: { driverId: string }[];
+  }) {
+    const { order, drivers } = payload;
+    if (!drivers?.length) return;
+
+    await this.push.sendToDrivers(
+      drivers.map((driver) => driver.driverId),
+      {
+        type: PUSH_TYPES.ORDER_AVAILABLE,
+        title: `New order · ${money(order.driverEarnings, order.currency)}`,
+        body: `${order.pickupLocation} → ${order.dropoffLocation}`,
+        // One order, one tray entry: the widening passes re-announce the same
+        // order and must replace the earlier card rather than stack on it.
+        collapseKey: `order:${order.id}:available`,
+        ttlSeconds: OFFER_TTL_SECONDS,
+        data: {
+          dedupeKey: `order-available:${order.id}`,
+          orderId: order.id,
+          vehicleType: order.vehicleType,
+          pickupLocation: order.pickupLocation,
+          dropoffLocation: order.dropoffLocation,
+          pickupLat: order.pickupLat,
+          pickupLng: order.pickupLng,
+          distanceKm: order.distanceKm,
+          earnings: order.driverEarnings,
+        },
+      },
+    );
+  }
+
+  /** §23 — the customer's "Driver Found!". */
+  private async onOrderReserved(payload: {
+    order: any;
+    eta?: { pickupMinutes: number | null } | null;
+    heldByDriver?: number;
+  }) {
+    const order = payload?.order;
+    if (!order?.driverId) return;
+
+    const driver = order.driver;
+    const driverName = driver?.user?.name?.split(' ')[0] ?? 'Your driver';
+    const vehicle = [driver?.vehicleColor, driver?.vehicleModel].filter(Boolean).join(' ');
+    const pickupMinutes = payload.eta?.pickupMinutes;
+
+    const detail = [
+      vehicle || null,
+      driver?.vehiclePlate || null,
+      pickupMinutes != null ? `${pickupMinutes} min away` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    await this.push.sendToUsers([order.userId], {
+      type: PUSH_TYPES.ORDER_RESERVED,
+      title: 'Driver found 🎉',
+      body: detail ? `${driverName} · ${detail}` : `${driverName} is on the way`,
+      collapseKey: `order:${order.id}`,
+      ttlSeconds: TRIP_TTL_SECONDS,
+      data: {
+        dedupeKey: `order-reserved:${order.id}`,
+        orderId: order.id,
+        driverName: driver?.user?.name,
+        vehiclePlate: driver?.vehiclePlate,
+        pickupEtaMinutes: pickupMinutes ?? null,
+        // §20: that the driver has other work, never what it is.
+        driverHandlingOtherOrders: (payload.heldByDriver ?? 1) > 1,
+      },
+    });
+  }
+
+  private async onOrderPickedUp(order: any) {
+    await this.push.sendToUsers([order.userId], {
+      type: PUSH_TYPES.ORDER_PICKED_UP,
+      title: 'Your order is on the way',
+      body: `Picked up from ${order.pickupLocation}.`,
+      collapseKey: `order:${order.id}`,
+      ttlSeconds: TRIP_TTL_SECONDS,
+      data: { dedupeKey: `order-picked-up:${order.id}`, orderId: order.id, status: order.status },
+    });
+  }
+
+  /**
+   * One order finished. The driver's other orders are untouched, and the body
+   * says so implicitly by naming only this drop-off.
+   */
+  private async onOrderDelivered(order: any) {
+    await this.push.sendToUsers([order.userId], {
+      type: PUSH_TYPES.ORDER_DELIVERED,
+      title: 'Delivered ✅',
+      body: `Your order reached ${order.dropoffLocation}.`,
+      collapseKey: `order:${order.id}`,
+      ttlSeconds: TRIP_TTL_SECONDS,
+      data: { dedupeKey: `order-delivered:${order.id}`, orderId: order.id },
+    });
+
+    if (order.driverId) {
+      await this.push.sendToDrivers([order.driverId], {
+        type: PUSH_TYPES.ORDER_DELIVERED,
+        title: 'Order completed',
+        body: `You earned ${money(order.driverEarnings, order.currency)}.`,
+        collapseKey: `order:${order.id}:driver`,
+        ttlSeconds: TRIP_TTL_SECONDS,
+        data: { dedupeKey: `order-delivered-driver:${order.id}`, orderId: order.id },
+      });
+    }
+  }
+
+  private async onNoDriverFound(order: any) {
+    if (!order) return;
+
+    await this.push.sendToUsers([order.userId], {
+      type: PUSH_TYPES.ORDER_NO_DRIVER,
+      title: 'No driver available',
+      body: `Nobody took your order to ${order.dropoffLocation}. Tap to try again.`,
+      collapseKey: `order:${order.id}`,
+      ttlSeconds: TRIP_TTL_SECONDS,
+      data: { dedupeKey: `order-no-driver:${order.id}`, orderId: order.id },
+    });
   }
 
   /**

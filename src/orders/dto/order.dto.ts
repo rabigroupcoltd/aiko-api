@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsLatitude,
@@ -16,11 +17,20 @@ import {
 import { VEHICLE_TYPES } from '../../pricing/dto/pricing.dto';
 
 export const ORDER_STATUSES = [
+  // Ride lane — the broadcast-and-bid flow.
   'PENDING',
   'ACCEPTED',
   'ARRIVED',
   'IN_PROGRESS',
   'COMPLETED',
+  // Marketplace lane — drivers claim the order themselves.
+  'SEARCHING_FOR_DRIVER',
+  'RESERVED',
+  'DRIVER_ARRIVING_PICKUP',
+  'PICKED_UP',
+  'IN_TRANSIT',
+  'DELIVERED',
+  'NO_DRIVER_FOUND',
   'CANCELLED',
 ] as const;
 
@@ -63,9 +73,39 @@ export class CreateOrderDto {
   @IsLongitude()
   dropoffLng: number;
 
+  @ApiPropertyOptional({
+    example: '08031234567',
+    maxLength: 20,
+    description: 'Who to call at the pickup. Often not the account holder.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  pickupPhone?: string;
+
+  @ApiPropertyOptional({
+    example: '08037654321',
+    maxLength: 20,
+    description: 'Who to call at the drop-off — the recipient, not the sender.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  dropoffPhone?: string;
+
   @ApiProperty({ enum: ['CASH', 'BANK_TRANSFER'], example: 'CASH' })
   @IsEnum(['CASH', 'BANK_TRANSFER'])
   paymentMethod: 'CASH' | 'BANK_TRANSFER';
+
+  @ApiPropertyOptional({
+    example: true,
+    default: false,
+    description:
+      'True opens the order at SEARCHING_FOR_DRIVER and announces it to nearby drivers, who claim it themselves. False (the default) creates a PENDING order for the original direct-booking flow.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  dispatch?: boolean;
 
   @ApiPropertyOptional({
     format: 'uuid',

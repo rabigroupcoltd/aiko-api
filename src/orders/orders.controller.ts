@@ -15,6 +15,7 @@ import {
 } from '../common/swagger/api-envelope.decorator';
 import {
   NEARBY_DRIVERS_EXAMPLE,
+  ORDER_ETA_EXAMPLE,
   ORDER_EXAMPLE,
   ORDER_PAGE_EXAMPLE,
   RIDE_MESSAGES_EXAMPLE,
@@ -115,6 +116,26 @@ export class OrdersController {
   async findOne(@Param('id') id: string, @CurrentUser() user: JwtUser) {
     try {
       const result = await this.ordersService.findOne(id, user);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Get(':id/eta')
+  @ApiOperation({
+    summary: 'When the driver will reach you',
+    description:
+      "Computed from the driver's whole planned route, not the straight line from where they are — a driver carrying two other orders reaches this pickup after whatever the route puts in front of it. `driverHandlingOtherOrders` says that they have other work without revealing what it is.",
+  })
+  @ApiParam(ORDER_ID_PARAM)
+  @ApiOkEnvelope(ORDER_ETA_EXAMPLE)
+  @ApiUnauthorized()
+  @ApiForbidden('You are not a participant in this trip')
+  @ApiNotFound('Order not found')
+  async eta(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    try {
+      const result = await this.ordersService.customerEta(id, user);
       return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);

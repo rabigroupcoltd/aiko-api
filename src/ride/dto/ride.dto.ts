@@ -213,3 +213,10 @@ export class SubmitRatingDto {
   @MaxLength(1000)
   comment?: string;
 }
+
+/** Addresses one marketplace order — reserve, skip. */
+export class OrderIdDto {
+  @ApiProperty({ format: 'uuid', example: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33' })
+  @IsUUID()
+  orderId: string;
+}

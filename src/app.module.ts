@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AddressesModule } from './addresses/addresses.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuthModule } from './auth/auth.module';
+import { DispatchModule } from './dispatch/dispatch.module';
 import { DriversModule } from './drivers/drivers.module';
 import { ResponsesModule } from './common/responses/responses.module';
 import { RideEventsModule } from './events/ride-events.module';
@@ -41,6 +42,8 @@ import { WalletModule } from './wallet/wallet.module';
     PricingModule,
     DriversModule,
     AddressesModule,
+    // Before OrdersModule — an order dispatches into the marketplace on create.
+    DispatchModule,
     OrdersModule,
     RideModule,
     WalletModule,

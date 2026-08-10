@@ -7,6 +7,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "verify:ws-docs": "ts-node src/realtime/verify-catalogue.ts",
+    "verify:concurrency": "tsc && node dist/dispatch/verify-concurrency.js",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "prisma:generate": "prisma generate",

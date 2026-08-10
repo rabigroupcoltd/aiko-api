@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
 import {
   QUEUE_DRIVER_LOCATION,
+  QUEUE_ORDER_DISPATCH,
   QUEUE_RIDE_MATCHING,
   QUEUE_RIDE_TIMEOUT,
 } from './queues.constants';
@@ -27,6 +28,7 @@ import { QueuesService } from './queues.service';
       { name: QUEUE_DRIVER_LOCATION },
       { name: QUEUE_RIDE_MATCHING },
       { name: QUEUE_RIDE_TIMEOUT },
+      { name: QUEUE_ORDER_DISPATCH },
     ),
   ],
   providers: [QueuesService],

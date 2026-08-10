@@ -875,3 +875,144 @@ export const WALLET_LIST_EXAMPLE = [
     driver: { ...DRIVER_EXAMPLE, user: CONTACT_USER_EXAMPLE },
   },
 ];
+
+// ---------------------------------------------------------- marketplace
+
+/**
+ * One card in the driver's available-orders grid.
+ *
+ * Note what is absent: no `userId`, no customer name, no phone numbers. §9 —
+ * none of that is needed to decide whether to take the job, and it arrives with
+ * the reservation.
+ */
+export const MARKETPLACE_CARD_EXAMPLE = {
+  id: ORDER_ID,
+  vehicleType: 'TRICYCLE',
+  pickupLocation: 'Minna Central Market, Minna',
+  pickupLat: 9.6139,
+  pickupLng: 6.5569,
+  dropoffLocation: 'Bosso Estate, Minna',
+  dropoffLat: 9.6485,
+  dropoffLng: 6.5311,
+  distanceKm: 8.4,
+  durationMins: 20.16,
+  earnings: 3150,
+  fare: 3500,
+  currency: 'NGN',
+  paymentMethod: 'CASH',
+  createdAt: '2026-08-08T09:12:03.118Z',
+  ageSeconds: 42,
+  compatibility: {
+    compatible: true,
+    additionalDistanceKm: 1.2,
+    additionalTimeMinutes: 3,
+    routeScore: 88,
+    match: 'GREAT',
+    pickupDistanceKm: 0.8,
+    existingDelayMinutes: 2,
+    reason: '+1.2 km on your current route',
+  },
+};
+
+export const MARKETPLACE_GRID_EXAMPLE = {
+  orders: [
+    MARKETPLACE_CARD_EXAMPLE,
+    {
+      ...MARKETPLACE_CARD_EXAMPLE,
+      id: '4b8e1d70-2c94-4a63-8f15-6d0a7b3c9e28',
+      pickupLocation: 'Tunga Low-Cost, Minna',
+      dropoffLocation: 'Airport Road, Minna',
+      fare: 2800,
+      earnings: 2520,
+      compatibility: {
+        compatible: false,
+        additionalDistanceKm: 6.8,
+        additionalTimeMinutes: 16,
+        routeScore: 21,
+        match: 'POOR',
+        pickupDistanceKm: 2.4,
+        existingDelayMinutes: 11,
+        reason: 'Would delay a customer you already accepted by 11 min',
+      },
+    },
+  ],
+  held: 1,
+  capacity: 3,
+  atCapacity: false,
+};
+
+export const MARKETPLACE_RESERVED_EXAMPLE = {
+  order: { ...ORDER_EXAMPLE, status: 'RESERVED', reservedAt: '2026-08-08T09:12:45.902Z' },
+  compatibility: MARKETPLACE_CARD_EXAMPLE.compatibility,
+  held: 2,
+  capacity: 3,
+};
+
+/**
+ * The driver's route across everything they hold.
+ *
+ * Note the interleaving — pickup, pickup, drop-off, pickup — and that each order
+ * keeps its own status. §19 and §45: the route groups them operationally, the
+ * orders stay separate.
+ */
+export const MARKETPLACE_ACTIVE_EXAMPLE = {
+  orders: [
+    {
+      ...ORDER_EXAMPLE,
+      status: 'PICKED_UP',
+      pickedUpAt: '2026-08-08T09:20:11.004Z',
+      deliveryEtaMinutes: 18,
+      pickupEtaMinutes: null,
+    },
+    {
+      ...ORDER_EXAMPLE,
+      id: '4b8e1d70-2c94-4a63-8f15-6d0a7b3c9e28',
+      status: 'RESERVED',
+      deliveryEtaMinutes: 26,
+      pickupEtaMinutes: 7,
+    },
+  ],
+  route: {
+    stops: [
+      {
+        orderId: '4b8e1d70-2c94-4a63-8f15-6d0a7b3c9e28',
+        kind: 'PICKUP',
+        lat: 9.6139,
+        lng: 6.5569,
+        address: 'Tunga Low-Cost, Minna',
+        phone: '08031234567',
+        status: 'RESERVED',
+        sequence: 1,
+        legKm: 2.1,
+        cumulativeKm: 2.1,
+        etaMinutes: 7,
+      },
+      {
+        orderId: ORDER_ID,
+        kind: 'DROPOFF',
+        lat: 9.6485,
+        lng: 6.5311,
+        address: 'Bosso Estate, Minna',
+        phone: '08037654321',
+        status: 'PICKED_UP',
+        sequence: 2,
+        legKm: 3.4,
+        cumulativeKm: 5.5,
+        etaMinutes: 18,
+      },
+    ],
+    totalKm: 8.2,
+    totalMinutes: 26,
+    deliveryEtaByOrder: { [ORDER_ID]: 18 },
+    pickupEtaByOrder: { '4b8e1d70-2c94-4a63-8f15-6d0a7b3c9e28': 7 },
+  },
+  held: 2,
+  capacity: 3,
+  status: 'AVAILABLE',
+};
+
+export const ORDER_ETA_EXAMPLE = {
+  pickupMinutes: 8,
+  deliveryMinutes: 24,
+  driverHandlingOtherOrders: true,
+};

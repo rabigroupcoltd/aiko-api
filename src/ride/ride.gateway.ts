@@ -14,6 +14,12 @@ import { OrderStatus } from '@prisma/client';
 import { Server, Socket } from 'socket.io';
 import { JwtUser } from '../common/current-user.decorator';
 import { ResponsesService } from '../common/responses/responses.service';
+import {
+  DRIVER_ACTIVE_STATUSES,
+  LEGACY_ACTIVE_STATUSES,
+} from '../dispatch/dispatch.constants';
+import { MarketplaceQueryDto } from '../dispatch/dto/marketplace.dto';
+import { MarketplaceService } from '../dispatch/marketplace.service';
 import { DriversService } from '../drivers/drivers.service';
 import { RideEventsService } from '../events/ride-events.service';
 import { OrdersService } from '../orders/orders.service';
@@ -25,6 +31,7 @@ import {
   CancelTripDto,
   CreateRideRequestDto,
   NearbyRequestsQueryDto,
+  OrderIdDto,
   PlaceBidDto,
   RideMessageDto,
   SubmitRatingDto,
@@ -64,6 +71,7 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     private drivers: DriversService,
     private orders: OrdersService,
     private ride: RideService,
+    private marketplace: MarketplaceService,
     private events: RideEventsService,
     private response: ResponsesService,
   ) {}
@@ -118,7 +126,90 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       this.server.to(rideRoom(payload.orderId)).emit('new-message', payload);
     });
 
+    // One broadcast for both transports. The socket handler below and
+    // POST /api/drivers/location both reach this through DriversService, which
+    // is what keeps a backgrounded driver's marker moving on the passenger's map.
+    this.events.on<any>('driver.location').subscribe(({ payload }) => {
+      this.server.to(driverWatchRoom(payload.driverId)).emit('driver-location-update', payload);
+    });
+
+    this.wireMarketplace();
+
     this.logger.log('Ride gateway initialised');
+  }
+
+  /**
+   * The marketplace's realtime half — §28.
+   *
+   * Three broadcasts carry the whole dispatch loop. `order-available` puts a
+   * card in a driver's grid, `order-reserved` tells the customer who won, and
+   * `order-removed` tells every *other* driver to drop it. Without the third the
+   * losing drivers keep a card they can no longer act on until their next poll.
+   */
+  private wireMarketplace() {
+    this.events.on<any>('order.available').subscribe(({ payload }) => {
+      const { order, drivers } = payload;
+      const card = this.toMarketplaceCard(order);
+
+      drivers?.forEach((driver: { driverId: string }) =>
+        this.server.to(driverRoom(driver.driverId)).emit('order-available', card),
+      );
+    });
+
+    this.events.on<any>('order.reserved').subscribe(({ payload }) => {
+      const { order, driverId, eta } = payload;
+      if (!order) return;
+
+      // The customer learns who is coming.
+      this.server.to(userRoom(order.userId)).emit('order-reserved', { order, eta });
+      this.server.to(rideRoom(order.id)).emit('order-reserved', { order, eta });
+
+      // The winner gets it as a trip; everyone else loses the card. Broadcast to
+      // the whole namespace rather than tracking who saw it — a driver who never
+      // had the card simply ignores an id they do not hold.
+      this.server.to(driverRoom(driverId)).emit('ride-stage-changed', order);
+      this.server.emit('order-removed', { orderId: order.id, reason: 'RESERVED' });
+    });
+
+    this.events.on<any>('order.no-driver-found').subscribe(({ payload }) => {
+      if (!payload) return;
+      this.server.to(userRoom(payload.userId)).emit('order-no-driver', payload);
+      this.server.emit('order-removed', { orderId: payload.id, reason: 'NO_DRIVER_FOUND' });
+    });
+
+    // A cancelled order that never found a driver is still sitting in grids.
+    this.events.on<any>('order.cancelled').subscribe(({ payload }) => {
+      if (!payload?.driverId) {
+        this.server.emit('order-removed', { orderId: payload?.id, reason: 'CANCELLED' });
+      }
+    });
+  }
+
+  /**
+   * An open order as a driver may see it over the socket.
+   *
+   * The same redaction the REST grid applies — no customer name, no phone, no
+   * user id. The card carries no compatibility score either: that depends on
+   * where this particular driver is and what they are already carrying, and the
+   * broadcast goes to many drivers at once. The client refetches the grid on
+   * receipt, which is where the per-driver scoring happens.
+   */
+  private toMarketplaceCard(order: any) {
+    return {
+      id: order.id,
+      vehicleType: order.vehicleType,
+      pickupLocation: order.pickupLocation,
+      pickupLat: order.pickupLat,
+      pickupLng: order.pickupLng,
+      dropoffLocation: order.dropoffLocation,
+      dropoffLat: order.dropoffLat,
+      dropoffLng: order.dropoffLng,
+      distanceKm: order.distanceKm,
+      earnings: order.driverEarnings,
+      fare: order.fare,
+      currency: order.currency,
+      createdAt: order.createdAt,
+    };
   }
 
   private broadcastOrder(order: any) {
@@ -167,7 +258,9 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   private async joinActiveRides(client: Socket, user: SocketUser) {
     const active = await this.prisma.order.findMany({
       where: {
-        status: { in: [OrderStatus.ACCEPTED, OrderStatus.ARRIVED, OrderStatus.IN_PROGRESS] },
+        // Both lanes. A driver holding three marketplace orders re-joins all
+        // three rooms, so chat on any of them survives a reconnect.
+        status: { in: [...LEGACY_ACTIVE_STATUSES, ...DRIVER_ACTIVE_STATUSES] },
         OR: [{ userId: user.sub }, ...(user.driverId ? [{ driverId: user.driverId }] : [])],
       },
       select: { id: true, driverId: true },
@@ -201,18 +294,10 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     if (!user.driverId) return this.response.forbidden('Only drivers can publish a location');
 
     try {
+      // The broadcast is raised by DriversService, not here — see the
+      // `driver.location` subscription in afterInit. Emitting it a second time
+      // would double every position update for anyone watching.
       const result = await this.drivers.updateLocation(user.sub, dto);
-      if (result.error) return this.response.handle(result);
-
-      this.server.to(driverWatchRoom(user.driverId)).emit('driver-location-update', {
-        driverId: user.driverId,
-        lat: dto.lat,
-        lng: dto.lng,
-        heading: dto.heading,
-        speedKph: dto.speedKph,
-        recordedAt: dto.recordedAt ?? new Date().toISOString(),
-      });
-
       return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);
@@ -292,6 +377,89 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       // passenger's own cancellation, land here without a second round trip.
       for (const request of result.body as { id: string }[]) {
         await client.join(requestRoom(request.id));
+      }
+
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  // ----------------------------------------------------------- marketplace
+
+  /**
+   * The driver's available-orders grid, over the socket.
+   *
+   * Mirrors `GET /api/marketplace/orders` exactly — same service, same
+   * redaction, same ranking. It exists so a driver who receives `order-available`
+   * can refresh without an HTTP round trip.
+   */
+  @SubscribeMessage('marketplace-orders')
+  async onMarketplaceOrders(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() dto: MarketplaceQueryDto,
+  ) {
+    const user = getUser(client);
+    if (!user) return this.response.unauthorized();
+    if (!user.driverId) return this.response.forbidden('Only drivers can browse the marketplace');
+
+    try {
+      const result = await this.marketplace.available(user.sub, dto);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  /**
+   * Claim an order. The ack is the whole answer — 409 ORDER_ALREADY_RESERVED for
+   * the losers of a race, 400 MAX_ORDER_CAPACITY_REACHED at the limit.
+   */
+  @SubscribeMessage('reserve-order')
+  async onReserveOrder(@ConnectedSocket() client: Socket, @MessageBody() dto: OrderIdDto) {
+    const user = getUser(client);
+    if (!user) return this.response.unauthorized();
+
+    try {
+      const result = await this.marketplace.reserve(dto.orderId, user.sub);
+      if (result.error) return this.response.handle(result);
+
+      // Joining now means the customer's first chat message reaches this driver
+      // without waiting for them to open the order.
+      await client.join(rideRoom(dto.orderId));
+
+      return this.response.handle(result, { message: 'Order reserved' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @SubscribeMessage('skip-order')
+  async onSkipOrder(@ConnectedSocket() client: Socket, @MessageBody() dto: OrderIdDto) {
+    const user = getUser(client);
+    if (!user) return this.response.unauthorized();
+
+    try {
+      const result = await this.marketplace.skip(dto.orderId, user.sub);
+      return this.response.handle(result, { message: 'Order skipped' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @SubscribeMessage('active-orders')
+  async onActiveOrders(@ConnectedSocket() client: Socket) {
+    const user = getUser(client);
+    if (!user) return this.response.unauthorized();
+
+    try {
+      const result = await this.marketplace.activeOrders(user.sub);
+      if (result.error) return this.response.handle(result);
+
+      // Re-join every held order's room in one go, so chat works across all of
+      // them after a reconnect rather than only the one on screen.
+      for (const order of (result.body as { orders: { id: string }[] }).orders) {
+        await client.join(rideRoom(order.id));
       }
 
       return this.response.handle(result);

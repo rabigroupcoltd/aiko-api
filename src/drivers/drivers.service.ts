@@ -426,6 +426,21 @@ export class DriversService {
 
       await this.redis.saveDriverLocation(driver.id, dto);
 
+      const recordedAt = dto.recordedAt || new Date().toISOString();
+
+      // Raised here rather than in the gateway so both transports feed the same
+      // broadcast. A driver whose phone is locked has no socket — their fixes
+      // arrive on POST /api/drivers/location from the background service, and
+      // the passenger watching them on a map must still see the marker move.
+      this.events.emit('driver.location', {
+        driverId: driver.id,
+        lat: dto.lat,
+        lng: dto.lng,
+        heading: dto.heading,
+        speedKph: dto.speedKph,
+        recordedAt,
+      });
+
       if (driver.isAvailable && driver.kycStatus === KycStatus.APPROVED) {
         await this.redis.setAvailable(driver.id, driver.vehicleType);
 
@@ -436,12 +451,7 @@ export class DriversService {
         this.announceAvailable(driver, dto.lat, dto.lng);
       }
 
-      return ok({
-        driverId: driver.id,
-        lat: dto.lat,
-        lng: dto.lng,
-        recordedAt: dto.recordedAt || new Date().toISOString(),
-      });
+      return ok({ driverId: driver.id, lat: dto.lat, lng: dto.lng, recordedAt });
     } catch (e) {
       return this.response.errorHandler(e);
     }

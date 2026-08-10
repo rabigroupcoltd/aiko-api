@@ -3,8 +3,10 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
   JOB_CANCEL_UNACCEPTED,
+  JOB_EXPAND_ORDER_SEARCH,
   JOB_FIND_NEARBY_DRIVERS,
   MATCHING_RETRY_DELAY_MS,
+  QUEUE_ORDER_DISPATCH,
   QUEUE_RIDE_MATCHING,
   QUEUE_RIDE_TIMEOUT,
 } from './queues.constants';
@@ -20,7 +22,28 @@ export class QueuesService {
   constructor(
     @InjectQueue(QUEUE_RIDE_MATCHING) private matchingQueue: Queue,
     @InjectQueue(QUEUE_RIDE_TIMEOUT) private timeoutQueue: Queue,
+    @InjectQueue(QUEUE_ORDER_DISPATCH) private dispatchQueue: Queue,
   ) {}
+
+  /**
+   * Widens the ring around a marketplace order nobody has claimed yet.
+   *
+   * The job id carries the attempt number, so re-arming after a pass cannot
+   * collide with the job that scheduled it — and re-dispatching an order that
+   * already has a pending pass at the same attempt is idempotent.
+   */
+  async scheduleOrderExpansion(orderId: string, attempt: number, delayMs: number) {
+    await this.dispatchQueue.add(
+      JOB_EXPAND_ORDER_SEARCH,
+      { orderId, attempt },
+      {
+        delay: delayMs,
+        jobId: `dispatch:${orderId}:${attempt}`,
+        removeOnComplete: true,
+        removeOnFail: 100,
+      },
+    );
+  }
 
   /** Expires the request if nobody has been accepted by the time it fires. */
   async scheduleRequestTimeout(requestId: string, delayMs: number) {

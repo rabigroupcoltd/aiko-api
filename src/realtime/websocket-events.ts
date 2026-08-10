@@ -87,6 +87,48 @@ export const CLIENT_EVENTS: ClientEventDoc[] = [
     example: { lat: 9.6139, lng: 6.5569, radiusKm: 5 },
   },
   {
+    event: 'marketplace-orders',
+    summary:
+      'The driver\'s available-orders grid. Mirrors GET /api/marketplace/orders — same ranking, same redaction. Sent after an `order-available` push so the client can rescore against its own position without an HTTP round trip.',
+    sender: 'Driver — anyone else gets 403',
+    payload: {
+      'lat?': 'number — a fresher fix than the server has, if you have one',
+      'lng?': 'number',
+      'radiusKm?': 'number 0.5-50 — defaults to INITIAL_DRIVER_RADIUS_KM',
+      'limit?': 'number 1-50 — defaults to 20',
+    },
+    ack: '`{ orders, held, capacity, atCapacity }` — each order carries a `compatibility` block scored for this driver',
+    example: { lat: 9.6139, lng: 6.5569, radiusKm: 5 },
+  },
+  {
+    event: 'reserve-order',
+    summary:
+      'Claim an order. Atomic — concurrent attempts resolve to one winner and every loser acks 409 ORDER_ALREADY_RESERVED. Capacity and route compatibility are re-checked server-side.',
+    sender: 'Driver',
+    payload: { orderId: 'uuid' },
+    ack: '`{ order, compatibility, held, capacity }` — joins `ride:<orderId>`. 409 `ORDER_ALREADY_RESERVED`, or 400 `MAX_ORDER_CAPACITY_REACHED`',
+    triggers: ['`order-reserved` to the customer', '`order-removed` to every other driver'],
+    example: { orderId: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33' },
+  },
+  {
+    event: 'skip-order',
+    summary:
+      'Drop an order from this driver\'s grid only. The order stays open and every other driver still sees it.',
+    sender: 'Driver',
+    payload: { orderId: 'uuid' },
+    ack: '`{ orderId, skipped, hiddenUntil }`',
+    example: { orderId: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33' },
+  },
+  {
+    event: 'active-orders',
+    summary:
+      'Everything the driver is holding plus the optimised route across all of it. Also re-joins every held order\'s room, so chat survives a reconnect on all of them rather than only the one on screen.',
+    sender: 'Driver',
+    payload: {},
+    ack: '`{ orders, route, held, capacity, status }` — `status` is OFFLINE | AVAILABLE | BUSY',
+    example: {},
+  },
+  {
     event: 'driver-bid',
     summary: 'Bid on an open request. One bid per driver; bidding again replaces it.',
     sender: 'Driver',
@@ -284,6 +326,45 @@ export const SERVER_EVENTS: ServerEventDoc[] = [
       readAt: null,
       createdAt: '2026-08-01T07:58:44.117Z',
     },
+  },
+  {
+    event: 'order-available',
+    summary:
+      'A marketplace order is open near you. Raised on creation, on each widening pass, and when a driver comes online or frees a capacity slot next to work already in flight.',
+    audience: '`driver:<driverId>` for each driver inside the current radius with free capacity',
+    payload:
+      '`{ id, vehicleType, pickupLocation, pickupLat, pickupLng, dropoffLocation, dropoffLat, dropoffLng, distanceKm, earnings, fare, currency, createdAt }` — no customer identity, and no compatibility score: that is per-driver, so refetch the grid on receipt',
+    example: {
+      id: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33',
+      vehicleType: 'TRICYCLE',
+      pickupLocation: 'Minna Central Market, Minna',
+      dropoffLocation: 'Bosso Estate, Minna',
+      distanceKm: 8.4,
+      earnings: 3150,
+      fare: 3500,
+      currency: 'NGN',
+    },
+  },
+  {
+    event: 'order-reserved',
+    summary: 'A driver claimed your order. Carries the driver, the vehicle, and the ETA along their real route.',
+    audience: '`user:<customerId>` and `ride:<orderId>`',
+    payload: '`{ order, eta: { pickupMinutes, deliveryMinutes } }`',
+  },
+  {
+    event: 'order-removed',
+    summary:
+      'Drop this order from the grid — someone else reserved it, the customer cancelled, or the search gave up. Broadcast to the namespace; a driver who never had the card ignores an id they do not hold.',
+    audience: 'Every connected client',
+    payload: '`{ orderId, reason: "RESERVED" | "CANCELLED" | "NO_DRIVER_FOUND" }`',
+    example: { orderId: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33', reason: 'RESERVED' },
+  },
+  {
+    event: 'order-no-driver',
+    summary:
+      'The search widened to MAX_DRIVER_RADIUS_KM across MAX_DISPATCH_ATTEMPTS passes and nobody claimed it. Terminal.',
+    audience: '`user:<customerId>`',
+    payload: 'The `Order` at NO_DRIVER_FOUND',
   },
   {
     event: 'driver-location-update',

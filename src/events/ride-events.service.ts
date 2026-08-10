@@ -8,6 +8,16 @@ export type RideEventName =
   | 'order.cancelled'
   | 'order.message'
   | 'order.rated'
+  /** A marketplace order is open and should appear in these drivers' grids. */
+  | 'order.available'
+  /** A driver won it — every other driver's grid must drop it. */
+  | 'order.reserved'
+  /** The driver physically collected it. */
+  | 'order.picked-up'
+  /** That one order is finished; the driver's others are untouched. */
+  | 'order.delivered'
+  /** The search widened as far as it could and nobody took it. */
+  | 'order.no-driver-found'
   | 'ride-request.created'
   | 'ride-request.bid'
   | 'ride-request.bid-accepted'
@@ -15,6 +25,14 @@ export type RideEventName =
   | 'ride-request.expired'
   /** A driver went online, or moved while online — triggers the backfill sweep. */
   | 'driver.available'
+  /**
+   * A driver published a position, over either transport.
+   *
+   * Exists because a backgrounded driver has no socket: their fixes arrive by
+   * REST, and without this the passenger's map would freeze the moment the
+   * driver's phone locked.
+   */
+  | 'driver.location'
   /** An admin cleared or rejected a driver's documents. */
   | 'driver.kyc-updated';
 

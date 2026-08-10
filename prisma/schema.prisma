@@ -51,6 +51,20 @@ enum KycStatus {
   REJECTED
 }
 
+/// Two lanes share one enum.
+///
+/// The original ride lane — PENDING → ACCEPTED → ARRIVED → IN_PROGRESS →
+/// COMPLETED — is what the broadcast-and-bid flow produces and is untouched.
+///
+/// The marketplace lane — SEARCHING_FOR_DRIVER → RESERVED →
+/// DRIVER_ARRIVING_PICKUP → PICKED_UP → IN_TRANSIT → DELIVERED — is what a
+/// customer order goes through when drivers claim it themselves. RESERVED means
+/// a driver has committed to the order but has not collected it; PICKED_UP
+/// means they physically have it. That distinction is what makes it safe for one
+/// driver to hold several orders at once.
+///
+/// NO_DRIVER_FOUND is terminal and marketplace-only: the search widened as far
+/// as it was allowed to and nobody claimed it.
 enum OrderStatus {
   PENDING
   ACCEPTED
@@ -58,6 +72,20 @@ enum OrderStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+
+  SEARCHING_FOR_DRIVER
+  RESERVED
+  DRIVER_ARRIVING_PICKUP
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  NO_DRIVER_FOUND
+}
+
+/// What a driver did with an order they were shown in the marketplace.
+enum DriverOrderActionType {
+  SKIPPED
+  RESERVED
 }
 
 enum PaymentMethod {
@@ -234,6 +262,7 @@ model Driver {
   vehiclePhotos VehiclePhoto[]
   location      DriverLocation?
   bids          RideBid[]
+  orderActions  DriverOrderAction[]
 
   @@index([vehicleType, isAvailable, kycStatus])
 }
@@ -389,6 +418,9 @@ model RideBid {
 model Order {
   id                 String        @id @default(uuid())
   userId             String
+  /// The one driver who owns this order. A single nullable column is what makes
+  /// "one order → one driver" structural: there is nowhere to put a second.
+  /// The inverse — one driver → many orders — is just many rows pointing here.
   driverId           String?
   vehicleType        VehicleType
   pickupLocation     String
@@ -397,6 +429,10 @@ model Order {
   pickupLng          Float
   dropoffLat         Float
   dropoffLng         Float
+  /// Who to call at each end. Distinct from the account phone: the person
+  /// sending a parcel is often not the person receiving it.
+  pickupPhone        String?
+  dropoffPhone       String?
   distanceKm         Float         @default(0)
   durationMins       Float         @default(0)
   fare               Float
@@ -409,22 +445,59 @@ model Order {
   driverEarnings     Float         @default(0)
   cancellationReason String?
   acceptedAt         DateTime?
+  /// Stamped when a driver claims the order. `acceptedAt` is set alongside it so
+  /// everything that already reads acceptance keeps working.
+  reservedAt         DateTime?
   arrivedAt          DateTime?
   startedAt          DateTime?
+  /// The driver physically has the order — the RESERVED → PICKED_UP boundary.
+  pickedUpAt         DateTime?
+  deliveredAt        DateTime?
   completedAt        DateTime?
   cancelledAt        DateTime?
+  /// Marketplace dispatch bookkeeping: how wide the search has reached and how
+  /// many times it has widened. Null on orders that never went to the market.
+  searchRadiusKm     Float?
+  dispatchAttempts   Int           @default(0)
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
-  user        User          @relation("UserOrders", fields: [userId], references: [id])
-  driver      Driver?       @relation("DriverOrders", fields: [driverId], references: [id])
-  rideRequest RideRequest?
-  messages    RideMessage[]
-  ratings     RideRating[]
+  user         User                @relation("UserOrders", fields: [userId], references: [id])
+  driver       Driver?             @relation("DriverOrders", fields: [driverId], references: [id])
+  rideRequest  RideRequest?
+  messages     RideMessage[]
+  ratings      RideRating[]
+  driverActions DriverOrderAction[]
 
   @@index([status, createdAt])
   @@index([userId, createdAt])
   @@index([driverId, createdAt])
+  /// Serves the marketplace's bounding-box scan over open orders.
+  @@index([status, pickupLat, pickupLng])
+}
+
+/// A driver's decision on one marketplace order.
+///
+/// One row per (order, driver): a skip is replaced by a reservation if the
+/// driver changes their mind and the order is still open, so the pair is unique
+/// rather than an append-only log. `hiddenUntil` is what stops a skipped order
+/// reappearing in the same driver's grid on the next poll — null means "never
+/// show me this again".
+model DriverOrderAction {
+  id          String                @id @default(uuid())
+  orderId     String
+  driverId    String
+  action      DriverOrderActionType
+  hiddenUntil DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, driverId])
+  @@index([driverId, action])
+  @@map("driver_order_actions")
 }
 
 model RideMessage {

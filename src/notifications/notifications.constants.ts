@@ -23,6 +23,23 @@ export const PUSH_TYPES = {
   TRIP_MESSAGE: 'TRIP_MESSAGE',
   /** An admin cleared or rejected the driver's documents. */
   KYC_STATUS: 'KYC_STATUS',
+
+  /** A marketplace order is open near this driver. */
+  ORDER_AVAILABLE: 'ORDER_AVAILABLE',
+  /** A driver claimed the customer's order. */
+  ORDER_RESERVED: 'ORDER_RESERVED',
+  /**
+   * No ORDER_REMOVED type. An order another driver took is dropped from the
+   * grid by the `order-removed` socket event, and a push could not clear the
+   * tray card anyway — the system drew it from the FCM payload, so there is no
+   * handle to cancel. A type nothing ever sends is a promise the system does
+   * not keep.
+   */
+  /** The driver collected the parcel. */
+  ORDER_PICKED_UP: 'ORDER_PICKED_UP',
+  ORDER_DELIVERED: 'ORDER_DELIVERED',
+  /** The search widened as far as it could and found nobody. */
+  ORDER_NO_DRIVER: 'ORDER_NO_DRIVER',
 } as const;
 
 export type PushType = (typeof PUSH_TYPES)[keyof typeof PUSH_TYPES];
