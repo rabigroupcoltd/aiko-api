@@ -36,9 +36,15 @@ export class RouteOptimizerService {
     private pricing: PricingService,
   ) {}
 
-  /** Where the driver is right now, from Redis, falling back to the last flush. */
-  async driverPosition(driverId: string): Promise<Point | null> {
-    const live = await this.redis.getDriverLocation(driverId);
+  /**
+   * Where the driver is right now, from Redis, falling back to the last flush.
+   *
+   * `vehicleType` narrows the Redis read to that vehicle's partition of the geo
+   * index. Optional only because a caller occasionally has an id and nothing
+   * else; pass it whenever you are holding a Driver row.
+   */
+  async driverPosition(driverId: string, vehicleType?: VehicleType): Promise<Point | null> {
+    const live = await this.redis.getDriverLocation(driverId, vehicleType);
     // The Redis response types lat/lng as nullable — GEOPOS answers for a driver
     // it has never seen. `live` being non-null does not mean it has coordinates.
     if (live?.lat != null && live.lng != null) return { lat: live.lat, lng: live.lng };
@@ -86,7 +92,7 @@ export class RouteOptimizerService {
     vehicleType: VehicleType,
     options: { orders?: Order[]; origin?: Point | null; extra?: RoutableOrder } = {},
   ): Promise<RoutePlan | null> {
-    const origin = options.origin ?? (await this.driverPosition(driverId));
+    const origin = options.origin ?? (await this.driverPosition(driverId, vehicleType));
     if (!origin) return null;
 
     const orders = options.orders ?? (await this.activeOrders(driverId));

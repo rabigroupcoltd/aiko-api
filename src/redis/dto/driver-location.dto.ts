@@ -11,6 +11,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { VehicleType } from '@prisma/client';
 import { VEHICLE_TYPES } from '../../pricing/dto/pricing.dto';
 
 export class DriverLocationDto {
@@ -81,6 +82,16 @@ export class NearbyDriversQueryDto {
   @Max(100)
   limit?: number = 20;
 
+  /**
+   * Narrows the search to one partition of the geo index — the fast path, and
+   * the one every dispatch call takes.
+   *
+   * Validated against the supported list so an HTTP client cannot ask for a
+   * vehicle Aiko does not run, but typed as the full Prisma enum because
+   * internal callers pass whatever a stored Driver or Order row says. A row
+   * left over from the ride-hailing days may still read CAR, and the search
+   * should answer honestly rather than fail to compile.
+   */
   @ApiPropertyOptional({
     enum: VEHICLE_TYPES,
     example: 'TRICYCLE',
@@ -88,7 +99,7 @@ export class NearbyDriversQueryDto {
   })
   @IsOptional()
   @IsEnum(VEHICLE_TYPES)
-  vehicleType?: (typeof VEHICLE_TYPES)[number];
+  vehicleType?: VehicleType;
 }
 
 export interface DriverNearbyResponse {

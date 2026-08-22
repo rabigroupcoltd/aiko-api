@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AccountType,
+  AuditEntity,
   Driver,
   KycStatus,
   OnboardingStep,
@@ -19,9 +20,17 @@ import {
   notFound,
   ok,
 } from '../common/responses/response.types';
+import {
+  DRIVER_ACTIVE_STATUSES,
+  LEGACY_ACTIVE_STATUSES,
+  MAX_RESERVED_ORDERS_PER_DRIVER,
+} from '../dispatch/dispatch.constants';
+import { deriveDispatchStatus } from '../dispatch/driver-status.util';
+import { AuditService } from '../audit/audit.service';
 import { RideEventsService } from '../events/ride-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { DriverLocationDto, NearbyDriversQueryDto } from '../redis/dto/driver-location.dto';
+import { HEARTBEAT_TTL_SECONDS } from '../redis/redis.keys';
 import { RedisService } from '../redis/redis.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadFile } from '../storage/storage.types';
@@ -36,6 +45,7 @@ export class DriversService {
     private storage: StorageService,
     private redis: RedisService,
     private events: RideEventsService,
+    private audit: AuditService,
     private response: ResponsesService,
   ) {}
 
@@ -302,7 +312,7 @@ export class DriversService {
    * until they happened to PATCH /api/onboarding — nothing else would ever
    * stamp `onboardingCompletedAt`.
    */
-  async approveKyc(id: string): Promise<ServiceResult> {
+  async approveKyc(id: string, actor?: JwtUser): Promise<ServiceResult> {
     try {
       const driver = await this.prisma.driver.update({
         where: { id },
@@ -322,6 +332,15 @@ export class DriversService {
       // The driver is sitting on the approval screen waiting for exactly this.
       this.events.emit('driver.kyc-updated', driver);
 
+      await this.audit.record({
+        actor,
+        action: 'driver.kyc.approve',
+        entity: AuditEntity.DRIVER,
+        entityId: id,
+        summary: `Approved KYC for ${driver.user?.name ?? 'a driver'}`,
+        metadata: { vehicleType: driver.vehicleType, newStatus: KycStatus.APPROVED },
+      });
+
       return ok(driver);
     } catch (e) {
       return this.response.errorHandler(e);
@@ -329,7 +348,7 @@ export class DriversService {
   }
 
   /** Puts the rider back on the document step so they can re-shoot and resubmit. */
-  async rejectKyc(id: string, reason: string): Promise<ServiceResult> {
+  async rejectKyc(id: string, reason: string, actor?: JwtUser): Promise<ServiceResult> {
     try {
       const driver = await this.prisma.driver.update({
         where: { id },
@@ -345,6 +364,17 @@ export class DriversService {
       await this.redis.removeDriver(id);
 
       this.events.emit('driver.kyc-updated', driver);
+
+      await this.audit.record({
+        actor,
+        action: 'driver.kyc.reject',
+        entity: AuditEntity.DRIVER,
+        entityId: id,
+        summary: `Rejected KYC for ${driver.user?.name ?? 'a driver'}`,
+        // The reason is the whole point of the entry: a rejection that nobody
+        // can explain later is the one that turns into a dispute.
+        metadata: { reason, newStatus: KycStatus.REJECTED },
+      });
 
       return ok(driver);
     } catch (e) {
@@ -384,7 +414,7 @@ export class DriversService {
       // moved since their last shift, or has not sent a fix yet. The sweep
       // tolerates both, and the next location heartbeat announces again.
       if (isAvailable) {
-        const position = await this.redis.getDriverLocation(id);
+        const position = await this.redis.getDriverLocation(id, driver.vehicleType);
         this.announceAvailable(updated, position?.lat ?? null, position?.lng ?? null);
       }
 
@@ -413,6 +443,165 @@ export class DriversService {
     });
   }
 
+  // ------------------------------------------------------- shift lifecycle
+
+  /**
+   * The calls a driver app makes to run a shift, all self-scoped.
+   *
+   * None of them take a driver id. The app holds an access token and nothing
+   * else, and every one of these acts on whoever the token belongs to — which
+   * removes a class of bug where a client caches a stale driver id and starts
+   * writing another driver's presence. `PATCH /drivers/:id/availability` stays
+   * for the admin dashboard, which genuinely does act on someone else.
+   */
+  async goOnline(userId: string): Promise<ServiceResult> {
+    const found = await this.requireDriverForUser(userId);
+    if (found.error) return found;
+    return this.setAvailability((found.body as Driver).id, true, asSelf(userId));
+  }
+
+  async goOffline(userId: string): Promise<ServiceResult> {
+    const found = await this.requireDriverForUser(userId);
+    if (found.error) return found;
+    return this.setAvailability((found.body as Driver).id, false, asSelf(userId));
+  }
+
+  /**
+   * Keep the presence TTL alive without publishing a position.
+   *
+   * A driver sitting still still has to prove they are there: the heartbeat key
+   * expires after HEARTBEAT_TTL_SECONDS and drops them out of the dispatch pool
+   * when it does. Location fixes refresh it as a side effect, so this exists for
+   * the case where there is no new fix worth sending — parked, waiting, indoors
+   * with a poor lock — and costs two keys rather than a whole geo write.
+   *
+   * Deliberately does not re-announce availability. Announcing triggers a sweep
+   * for open work, and a stationary driver has no new position to be swept
+   * against; `updateLocation` covers the driver who has actually moved.
+   */
+  async heartbeat(userId: string): Promise<ServiceResult> {
+    try {
+      const found = await this.requireDriverForUser(userId);
+      if (found.error) return found;
+
+      const driver = found.body as Driver;
+      if (driver.isBlocked) return forbidden('Driver is blocked');
+      if (!driver.isAvailable) return badRequest('You are offline — go online first');
+
+      await this.redis.heartbeat(driver.id);
+      await this.redis.setAvailable(driver.id, driver.vehicleType);
+
+      return ok({
+        driverId: driver.id,
+        online: true,
+        expiresInSeconds: HEARTBEAT_TTL_SECONDS,
+      });
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
+  /**
+   * Everything the app needs to draw itself on open, in one call.
+   *
+   * This is the whole of reconnect handling on the client. The socket pushes
+   * notifications and holds no state, so after a reconnect — or a cold start, or
+   * coming back from the background — the app asks this once and rebuilds:
+   * whether the shift is running, what is being carried, where the driver was
+   * last seen, and how much room is left for new work.
+   *
+   * `presence` comes from Redis and `isAvailable` from Postgres, and they can
+   * legitimately disagree: a driver whose app was killed is still `isAvailable`
+   * in the database while their heartbeat has expired in Redis. Both are
+   * reported rather than reconciled, because the app needs to tell the two
+   * apart — the first is "you are offline", the second is "your shift is still
+   * on, start sending heartbeats again".
+   */
+  async getState(userId: string): Promise<ServiceResult> {
+    try {
+      const found = await this.requireDriverForUser(userId);
+      if (found.error) return found;
+
+      const driver = found.body as Driver;
+
+      const [heldCount, legacyCount, online, position, activeOrders] = await Promise.all([
+        this.prisma.order.count({
+          where: { driverId: driver.id, status: { in: DRIVER_ACTIVE_STATUSES } },
+        }),
+        this.prisma.order.count({
+          where: { driverId: driver.id, status: { in: LEGACY_ACTIVE_STATUSES } },
+        }),
+        this.redis.isOnline(driver.id),
+        this.redis.getDriverLocation(driver.id, driver.vehicleType),
+        this.prisma.order.findMany({
+          where: {
+            driverId: driver.id,
+            status: { in: [...DRIVER_ACTIVE_STATUSES, ...LEGACY_ACTIVE_STATUSES] },
+          },
+          select: {
+            id: true,
+            status: true,
+            description: true,
+            pickupLocation: true,
+            pickupLat: true,
+            pickupLng: true,
+            dropoffLocation: true,
+            dropoffLat: true,
+            dropoffLng: true,
+            distanceKm: true,
+            fare: true,
+            driverEarnings: true,
+            currency: true,
+            reservedAt: true,
+            createdAt: true,
+          },
+          orderBy: { reservedAt: 'asc' },
+        }),
+      ]);
+
+      const status = deriveDispatchStatus({
+        isAvailable: driver.isAvailable,
+        isBlocked: driver.isBlocked,
+        kycStatus: driver.kycStatus,
+        heldCount,
+        legacyCount,
+      });
+
+      return ok({
+        driverId: driver.id,
+        vehicleType: driver.vehicleType,
+
+        /** What dispatch thinks of this driver right now. */
+        status,
+
+        /** The shift switch, as the driver last set it. */
+        isAvailable: driver.isAvailable,
+
+        /**
+         * Whether Redis still holds a live heartbeat. False while `isAvailable`
+         * is true means the app died mid-shift and should resume heartbeats.
+         */
+        presence: { online, heartbeatTtlSeconds: HEARTBEAT_TTL_SECONDS },
+
+        /** Why the driver cannot go online, when they cannot. */
+        kycStatus: driver.kycStatus,
+        isBlocked: driver.isBlocked,
+        canGoOnline: driver.kycStatus === KycStatus.APPROVED && !driver.isBlocked,
+
+        held: heldCount + legacyCount,
+        capacity: MAX_RESERVED_ORDERS_PER_DRIVER,
+        atCapacity: heldCount >= MAX_RESERVED_ORDERS_PER_DRIVER,
+        activeOrders,
+
+        lastLocation: position
+          ? { lat: position.lat, lng: position.lng, recordedAt: position.recordedAt ?? null }
+          : null,
+      });
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
   // -------------------------------------------------------------- location
 
   /** Writes to Redis only — the flush job batches it into Postgres. */
@@ -424,7 +613,9 @@ export class DriversService {
       const driver = found.body as Driver;
       if (driver.isBlocked) return forbidden('Driver is blocked');
 
-      await this.redis.saveDriverLocation(driver.id, dto);
+      // The vehicle type partitions the geo index, so an order for a keke only
+      // ever searches keke drivers.
+      await this.redis.saveDriverLocation(driver.id, driver.vehicleType, dto);
 
       const recordedAt = dto.recordedAt || new Date().toISOString();
 
@@ -574,7 +765,7 @@ export class DriversService {
     }
   }
 
-  async blockDriver(id: string, isBlocked: boolean): Promise<ServiceResult> {
+  async blockDriver(id: string, isBlocked: boolean, actor?: JwtUser): Promise<ServiceResult> {
     try {
       const driver = await this.prisma.driver.update({
         where: { id },
@@ -582,6 +773,16 @@ export class DriversService {
       });
 
       if (isBlocked) await this.redis.removeDriver(id);
+
+      await this.audit.record({
+        actor,
+        action: isBlocked ? 'driver.block' : 'driver.unblock',
+        entity: AuditEntity.DRIVER,
+        entityId: id,
+        summary: `${isBlocked ? 'Blocked' : 'Unblocked'} driver ${id}`,
+        metadata: { isBlocked, currentDebt: driver.currentDebt, debtLimit: driver.debtLimit },
+      });
+
       return ok(driver);
     } catch (e) {
       return this.response.errorHandler(e);
@@ -651,4 +852,17 @@ function startOfToday(): Date {
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+/**
+ * A JwtUser standing in for the caller acting on themselves.
+ *
+ * `setAvailability` authorises through `assertCanManage`, which compares the
+ * driver's userId against the caller's. The self-scoped routes have already
+ * resolved the driver *from* that userId, so the check is guaranteed to pass —
+ * this supplies the shape it expects rather than duplicating the body of
+ * setAvailability for the sake of skipping a check that cannot fail.
+ */
+function asSelf(userId: string): JwtUser {
+  return { sub: userId } as JwtUser;
 }

@@ -153,6 +153,7 @@ export class OrdersService {
         data: {
           userId,
           vehicleType: dto.vehicleType as VehicleType,
+          description: dto.description,
           pickupLocation: dto.pickupLocation,
           dropoffLocation: dto.dropoffLocation,
           pickupLat: dto.pickupLat,
@@ -559,7 +560,7 @@ export class OrdersService {
     });
     if (held >= MAX_RESERVED_ORDERS_PER_DRIVER) return;
 
-    const position = await this.redis.getDriverLocation(driverId);
+    const position = await this.redis.getDriverLocation(driverId, driver.vehicleType);
     if (!position) return;
 
     this.events.emit('driver.available', {

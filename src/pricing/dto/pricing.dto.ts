@@ -11,8 +11,18 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { SUPPORTED_VEHICLE_TYPE_NAMES } from '../../common/vehicle-types';
 
-export const VEHICLE_TYPES = ['CAR', 'BIKE', 'TRUCK', 'TRICYCLE', 'BICYCLE'] as const;
+/**
+ * What every vehicle-typed DTO in the API validates against.
+ *
+ * Deliberately the *supported* list, not the full Prisma enum: this one
+ * constant is imported by the pricing, driver, order and ride DTOs, so
+ * narrowing it here is what stops a client registering a truck, booking a car
+ * or asking for a bicycle quote. See `common/vehicle-types.ts` for why the
+ * database enum still carries the other three.
+ */
+export const VEHICLE_TYPES = SUPPORTED_VEHICLE_TYPE_NAMES;
 
 export class UpsertPricingRuleDto {
   @ApiProperty({ example: 300, minimum: 0, description: 'Flat charge applied to every trip.' })

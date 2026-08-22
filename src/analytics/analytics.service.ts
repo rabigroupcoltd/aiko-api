@@ -1,7 +1,21 @@
 import { Injectable } from '@nestjs/common';
+import { OrderStatus } from '@prisma/client';
 import { ResponsesService } from '../common/responses/responses.service';
 import { ServiceResult, ok } from '../common/responses/response.types';
 import { PrismaService } from '../prisma/prisma.service';
+
+/**
+ * An order that finished and earned money, in either lane.
+ *
+ * The two lanes end at different statuses — the legacy bid flow at COMPLETED,
+ * the marketplace at DELIVERED — and every figure here originally counted only
+ * the first. That was correct when the bid flow was the product; it silently
+ * reports zero revenue now that dispatch runs through the marketplace, because
+ * no marketplace order ever reaches COMPLETED.
+ *
+ * Both, therefore. A delivery is a delivery whichever way the driver got it.
+ */
+const EARNING_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED, OrderStatus.DELIVERED];
 
 @Injectable()
 export class AnalyticsService {
@@ -28,19 +42,19 @@ export class AnalyticsService {
         this.prisma.driver.count(),
         this.prisma.driver.count({ where: { isAvailable: true, kycStatus: 'APPROVED' } }),
         this.prisma.order.count(),
-        this.prisma.order.count({ where: { status: 'COMPLETED' } }),
+        this.prisma.order.count({ where: { status: { in: EARNING_STATUSES } } }),
         this.prisma.order.count({ where: { status: 'CANCELLED' } }),
         this.prisma.order.aggregate({
-          where: { paymentMethod: 'CASH', status: 'COMPLETED' },
+          where: { paymentMethod: 'CASH', status: { in: EARNING_STATUSES } },
           _sum: { fare: true },
         }),
         this.prisma.order.aggregate({
-          where: { paymentMethod: 'BANK_TRANSFER', status: 'COMPLETED' },
+          where: { paymentMethod: 'BANK_TRANSFER', status: { in: EARNING_STATUSES } },
           _sum: { fare: true },
         }),
         this.prisma.driver.aggregate({ _sum: { currentDebt: true } }),
         this.prisma.order.aggregate({
-          where: { status: 'COMPLETED' },
+          where: { status: { in: EARNING_STATUSES } },
           _sum: { platformFee: true },
         }),
       ]);
@@ -74,7 +88,7 @@ export class AnalyticsService {
       const drivers = await this.prisma.driver.findMany({
         include: {
           user: { select: { name: true, email: true, phone: true } },
-          orders: { where: { status: 'COMPLETED' } },
+          orders: { where: { status: { in: EARNING_STATUSES } } },
         },
       });
 
@@ -128,16 +142,19 @@ export class AnalyticsService {
           this.prisma.order.findMany({ where: { createdAt: { gte: weekAgo } } }),
           this.prisma.order.findMany({ where: { createdAt: { gte: monthAgo } } }),
           this.prisma.order.count(),
-          this.prisma.order.aggregate({ where: { status: 'COMPLETED' }, _sum: { fare: true } }),
+          this.prisma.order.aggregate({
+            where: { status: { in: EARNING_STATUSES } },
+            _sum: { fare: true },
+          }),
         ]);
 
       const stats = (orders: { status: string; fare: number }[]) => ({
         total: orders.length,
-        completed: orders.filter((order) => order.status === 'COMPLETED').length,
+        completed: orders.filter((order) => isEarning(order.status)).length,
         cancelled: orders.filter((order) => order.status === 'CANCELLED').length,
         pending: orders.filter((order) => order.status === 'PENDING').length,
         revenue: orders
-          .filter((order) => order.status === 'COMPLETED')
+          .filter((order) => isEarning(order.status))
           .reduce((sum, order) => sum + order.fare, 0),
       });
 
@@ -159,7 +176,7 @@ export class AnalyticsService {
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       const orders = await this.prisma.order.findMany({
-        where: { createdAt: { gte: thirtyDaysAgo }, status: 'COMPLETED' },
+        where: { createdAt: { gte: thirtyDaysAgo }, status: { in: EARNING_STATUSES } },
         orderBy: { createdAt: 'asc' },
       });
 
@@ -211,7 +228,7 @@ export class AnalyticsService {
       return ok(
         rules.map((rule) => {
           const rows = orderStats.filter((row) => row.vehicleType === rule.vehicleType);
-          const completed = rows.filter((row) => row.status === 'COMPLETED');
+          const completed = rows.filter((row) => isEarning(row.status));
 
           return {
             vehicleType: rule.vehicleType,
@@ -240,7 +257,7 @@ export class AnalyticsService {
       const drivers = await this.prisma.driver.findMany({
         include: {
           user: { select: { name: true } },
-          orders: { where: { status: 'COMPLETED' } },
+          orders: { where: { status: { in: EARNING_STATUSES } } },
         },
         orderBy: { totalTrips: 'desc' },
         take: limit,
@@ -290,4 +307,9 @@ function startOfToday(): Date {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
   return date;
+}
+
+/** The string form of EARNING_STATUSES, for rows already loaded into memory. */
+function isEarning(status: string): boolean {
+  return (EARNING_STATUSES as string[]).includes(status);
 }

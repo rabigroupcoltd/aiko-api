@@ -142,6 +142,15 @@ export class DispatchService implements OnModuleInit {
 
     if (fresh.length === 0) return [];
 
+    // Remembered as a set so the losers are addressable when someone wins.
+    // `announcedKey` above already records the same pair, but one key per
+    // (driver, order) cannot be enumerated — and "who else saw this card" is
+    // exactly the question REQUEST_LOST has to answer.
+    await this.redis.addOfferedDrivers(
+      order.id,
+      fresh.map((target) => target.driverId),
+    );
+
     this.events.emit('order.available', { order, drivers: fresh, radiusKm });
     return fresh;
   }

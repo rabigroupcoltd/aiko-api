@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AddressesModule } from './addresses/addresses.module';
+import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { AuditModule } from './audit/audit.module';
+import { SupportModule } from './support/support.module';
 import { AuthModule } from './auth/auth.module';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { DriversModule } from './drivers/drivers.module';
@@ -48,6 +51,9 @@ import { WalletModule } from './wallet/wallet.module';
     RideModule,
     WalletModule,
     AnalyticsModule,
+    AuditModule,
+    SupportModule,
+    AdminModule,
 
     // Drop this import to run an API-only instance with workers hosted elsewhere.
     WorkersModule,

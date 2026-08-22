@@ -49,9 +49,18 @@ async function bootstrap() {
   app.useStaticAssets(resolve(process.env.UPLOAD_DIR || './uploads'), { prefix: '/uploads/' });
 
   // Fan WebSocket events out through Redis so multiple instances stay in sync.
-  const redisIoAdapter = new RedisIoAdapter(app);
-  await redisIoAdapter.connectToRedis();
-  app.useWebSocketAdapter(redisIoAdapter);
+  //
+  // Off by default. The adapter exists so a client connected to instance A
+  // receives an event raised on instance B, which is worth nothing while there
+  // is one instance — and it is not free: it holds a second Redis connection
+  // blocking on XREAD in a permanent loop, whether or not anything is
+  // broadcast. Turn it on in the same breath as the second instance.
+  if (process.env.SOCKET_REDIS_ADAPTER === 'true') {
+    const redisIoAdapter = new RedisIoAdapter(app);
+    await redisIoAdapter.connectToRedis();
+    app.useWebSocketAdapter(redisIoAdapter);
+    logger.log('Socket.IO scaling through the Redis Streams adapter');
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port);

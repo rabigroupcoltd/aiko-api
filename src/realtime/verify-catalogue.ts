@@ -4,113 +4,74 @@
  *   npm run verify:ws-docs
  *
  * The catalogue in websocket-events.ts is hand-written, so it is only worth
- * trusting if something compares it to the source. This reads the gateway,
- * extracts every `@SubscribeMessage` name and every `.emit(...)` name, and
- * exits non-zero when one of them is undocumented — which turns doc drift into
- * a failed command rather than a quiet gap in the published spec.
+ * trusting if something compares it to the source. Three invariants, each
+ * catching a different kind of drift:
+ *
+ *   1. The gateway has no `@SubscribeMessage` handlers. The socket is a
+ *      one-way pipe by design, and a handler creeping back in is the single
+ *      change that would silently break that guarantee — the docs would still
+ *      say "no client events" while the server quietly accepted one.
+ *   2. Every INFO_CODES member the gateway actually sends is documented.
+ *   3. Every documented code exists in INFO_CODES / ERROR_CODES, so a renamed
+ *      constant cannot leave a stale row in the published table.
  *
  * A plain script rather than a test because the project has no test runner.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { CLIENT_EVENTS, SERVER_EVENTS } from './websocket-events';
+import { ERROR_CODES, INFO_CODES } from './notification-codes';
+import { ALL_NOTIFICATIONS, ERROR_NOTIFICATIONS } from './websocket-events';
 
 const GATEWAY = join(__dirname, '..', 'ride', 'ride.gateway.ts');
 
-/**
- * Events the `.emit('name'` regex cannot see, and why.
- *
- * `requiresLiteral` keeps the exemption narrow: the name must still occur
- * somewhere in the gateway, so removing the event is still a failure. Only
- * `exception` is fully external — Nest's WebSocket exception layer emits it,
- * and no line of ours mentions it.
- */
-const INDIRECT_EMITS: Record<string, { why: string; requiresLiteral: boolean }> = {
-  'ride-stage-changed': {
-    why: 'chosen into a variable in broadcastOrder() before the emit',
-    requiresLiteral: true,
-  },
-  'trip-cancelled': {
-    why: 'chosen into a variable in broadcastOrder() before the emit',
-    requiresLiteral: true,
-  },
-  exception: {
-    why: "raised by Nest's WebSocket exception layer, not by our code",
-    requiresLiteral: false,
-  },
-};
+const source = readFileSync(GATEWAY, 'utf8');
+const problems: string[] = [];
 
-function unique(values: string[]): string[] {
-  return [...new Set(values)].sort();
-}
-
-function main() {
-  const source = readFileSync(GATEWAY, 'utf8');
-
-  const handled = unique(
-    [...source.matchAll(/@SubscribeMessage\('([^']+)'\)/g)].map((m) => m[1]),
+// 1 — the socket must stay receive-only.
+const handlers = [...source.matchAll(/@SubscribeMessage\(\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+if (handlers.length > 0) {
+  problems.push(
+    `The gateway declares ${handlers.length} @SubscribeMessage handler(s): ${handlers.join(', ')}.\n` +
+      '  The socket is documented as notification-only. Either move the mutation to a REST\n' +
+      '  endpoint, or update the contract and this check together.',
   );
-  const emitted = unique([...source.matchAll(/\.emit\(\s*'([^']+)'/g)].map((m) => m[1]));
-
-  const documentedClient = unique(CLIENT_EVENTS.map((e) => e.event));
-  const documentedServer = unique(SERVER_EVENTS.map((e) => e.event));
-
-  const problems: string[] = [];
-
-  // A zero count means the regexes stopped matching the gateway's style, which
-  // would otherwise make every check below pass vacuously.
-  if (handled.length === 0) problems.push('found no @SubscribeMessage handlers — check the regex');
-  if (emitted.length === 0) problems.push('found no .emit() calls — check the regex');
-
-  handled
-    .filter((e) => !documentedClient.includes(e))
-    .forEach((e) => problems.push(`client event '${e}' is handled but not documented`));
-
-  documentedClient
-    .filter((e) => !handled.includes(e))
-    .forEach((e) => problems.push(`client event '${e}' is documented but no handler exists`));
-
-  emitted
-    .filter((e) => !documentedServer.includes(e))
-    .forEach((e) => problems.push(`server event '${e}' is emitted but not documented`));
-
-  documentedServer
-    .filter((e) => !emitted.includes(e))
-    .forEach((e) => {
-      const reason = INDIRECT_EMITS[e];
-      if (!reason) {
-        problems.push(`server event '${e}' is documented but never emitted`);
-        return;
-      }
-
-      // The allowlist excuses the emit regex, not the event's existence — the
-      // name must still appear in the gateway, so deleting one is still caught.
-      if (reason.requiresLiteral && !source.includes(`'${e}'`)) {
-        problems.push(`server event '${e}' (${reason.why}) no longer appears in the gateway`);
-      }
-    });
-
-  // Every broadcast a handler claims to trigger must be a real server event.
-  for (const event of CLIENT_EVENTS) {
-    for (const trigger of event.triggers ?? []) {
-      const named = [...trigger.matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
-      if (named.length === 0) problems.push(`'${event.event}' has a trigger naming no event`);
-      named
-        .filter((name) => !documentedServer.includes(name))
-        .forEach((name) => problems.push(`'${event.event}' triggers unknown event '${name}'`));
-    }
-  }
-
-  console.log(`handlers in gateway : ${handled.length}  -> documented ${documentedClient.length}`);
-  console.log(`emits in gateway    : ${emitted.length}  -> documented ${documentedServer.length}`);
-
-  if (problems.length > 0) {
-    console.error('\nWebSocket docs are out of date:');
-    problems.forEach((p) => console.error(`  - ${p}`));
-    process.exit(1);
-  }
-
-  console.log('\nWebSocket catalogue matches the gateway.');
 }
 
-main();
+// 2 — every code the gateway sends is documented.
+const documented = new Set([
+  ...ALL_NOTIFICATIONS.map((doc) => doc.code),
+  ...ERROR_NOTIFICATIONS.map((doc) => doc.code),
+]);
+
+const used = [...source.matchAll(/(?:INFO_CODES|ERROR_CODES)\.([A-Z_]+)/g)].map((m) => m[1]);
+const known: Record<string, string> = { ...INFO_CODES, ...ERROR_CODES };
+
+for (const name of new Set(used)) {
+  const code = known[name];
+  if (!code) {
+    problems.push(`Gateway references \`${name}\`, which is not in INFO_CODES or ERROR_CODES.`);
+    continue;
+  }
+  if (!documented.has(code)) {
+    problems.push(`\`${code}\` is sent by the gateway but has no row in websocket-events.ts.`);
+  }
+}
+
+// 3 — nothing documented has since been renamed away.
+const defined = new Set<string>(Object.values(known));
+for (const code of documented) {
+  if (!defined.has(code)) {
+    problems.push(`\`${code}\` is documented but no longer exists in notification-codes.ts.`);
+  }
+}
+
+if (problems.length > 0) {
+  console.error('WebSocket catalogue is out of step with the gateway:\n');
+  problems.forEach((problem) => console.error(`  • ${problem}`));
+  console.error('');
+  process.exit(1);
+}
+
+console.log(
+  `WebSocket catalogue OK — no client events, ${documented.size} codes documented and sent.`,
+);

@@ -3,6 +3,7 @@ import { KycStatus, Order, OrderStatus } from '@prisma/client';
 import { RideEventsService } from '../events/ride-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PUSH_TYPES, OFFER_TTL_SECONDS, TRIP_TTL_SECONDS } from './notifications.constants';
+import { RedisService } from '../redis/redis.service';
 import { PushService } from './push.service';
 
 /**
@@ -26,6 +27,7 @@ export class RideNotificationsService implements OnModuleInit {
     private events: RideEventsService,
     private prisma: PrismaService,
     private push: PushService,
+    private redis: RedisService,
   ) {}
 
   onModuleInit() {
@@ -45,6 +47,17 @@ export class RideNotificationsService implements OnModuleInit {
     this.subscribe('order.picked-up', (payload) => this.onOrderPickedUp(payload));
     this.subscribe('order.delivered', (payload) => this.onOrderDelivered(payload));
     this.subscribe('order.no-driver-found', (payload) => this.onNoDriverFound(payload));
+
+    // The losing half of fastest-finger. Both paths clear the card for every
+    // driver who was offered the order but did not get it.
+    this.subscribe('order.reserved', (payload) =>
+      this.clearOfferCards(payload?.order?.id, payload?.driverId),
+    );
+    this.subscribe('order.cancelled', async (payload) => {
+      // Only while it was still on the market. Once a driver holds it, this is
+      // a trip being cancelled and TRIP_CANCELLED already covers them.
+      if (payload?.id && !payload.driverId) await this.clearOfferCards(payload.id);
+    });
 
     this.logger.log('Ride push notifications wired');
   }
@@ -68,15 +81,32 @@ export class RideNotificationsService implements OnModuleInit {
       drivers.map((driver) => driver.driverId),
       {
         type: PUSH_TYPES.ORDER_AVAILABLE,
-        title: `New order · ${money(order.driverEarnings, order.currency)}`,
-        body: `${order.pickupLocation} → ${order.dropoffLocation}`,
+        /**
+         * Data-only, and drawn by the app rather than by Android.
+         *
+         * The tray entry has to be cancellable: another driver takes the order
+         * seconds later and the card left on the phone advertises work that is
+         * gone. Android draws a `notification` block itself and gives the app no
+         * handle to it, so the offer is sent as data and displayed through
+         * Notifee under a known id — which ORDER_REMOVED then cancels.
+         *
+         * Safe here because a driver who is online is running the background
+         * location foreground service, so the process is alive and high-priority
+         * data messages are delivered promptly rather than deferred.
+         */
+        silent: true,
         // One order, one tray entry: the widening passes re-announce the same
         // order and must replace the earlier card rather than stack on it.
         collapseKey: `order:${order.id}:available`,
         ttlSeconds: OFFER_TTL_SECONDS,
         data: {
           dedupeKey: `order-available:${order.id}`,
+          // The copy the app renders. Carried in data because a silent message
+          // has no notification block to put it in.
+          title: `New order · ${money(order.driverEarnings, order.currency)}`,
+          body: `${order.pickupLocation} → ${order.dropoffLocation}`,
           orderId: order.id,
+          description: order.description ?? undefined,
           vehicleType: order.vehicleType,
           pickupLocation: order.pickupLocation,
           dropoffLocation: order.dropoffLocation,
@@ -87,6 +117,43 @@ export class RideNotificationsService implements OnModuleInit {
         },
       },
     );
+  }
+
+  /**
+   * Tell every driver who lost the race that the card is gone.
+   *
+   * Silent, because nobody wants a buzz to be told they were too slow. The
+   * point is the payload: a backgrounded driver still has the ORDER_AVAILABLE
+   * entry sitting in their tray advertising a job that is no longer available,
+   * and tapping it would open a card the reserve endpoint will refuse. The app
+   * cancels that entry by id on receipt.
+   *
+   * The audience comes from the offer set rather than a fresh radius search —
+   * the ring widens over time, so the drivers who need telling are the union of
+   * every pass, including ones who have since driven out of range. Read without
+   * clearing: RideGateway answers the same question for the socket half, and a
+   * destructive read would starve whichever subscriber ran second.
+   */
+  private async clearOfferCards(orderId?: string, winnerId?: string) {
+    if (!orderId) return;
+
+    const offered = await this.redis.getOfferedDrivers(orderId);
+    const losers = winnerId ? offered.filter((id) => id !== winnerId) : offered;
+    if (!losers.length) return;
+
+    await this.push.sendToDrivers(losers, {
+      type: PUSH_TYPES.ORDER_REMOVED,
+      silent: true,
+      // Shared with ORDER_AVAILABLE so an offer still queued for an offline
+      // device is replaced by this rather than delivered after the order closed.
+      collapseKey: `order:${orderId}:available`,
+      ttlSeconds: OFFER_TTL_SECONDS,
+      data: {
+        dedupeKey: `order-removed:${orderId}`,
+        orderId,
+        reason: winnerId ? 'TAKEN' : 'CANCELLED',
+      },
+    });
   }
 
   /** §23 — the customer's "Driver Found!". */

@@ -29,12 +29,18 @@ export const PUSH_TYPES = {
   /** A driver claimed the customer's order. */
   ORDER_RESERVED: 'ORDER_RESERVED',
   /**
-   * No ORDER_REMOVED type. An order another driver took is dropped from the
-   * grid by the `order-removed` socket event, and a push could not clear the
-   * tray card anyway — the system drew it from the FCM payload, so there is no
-   * handle to cancel. A type nothing ever sends is a promise the system does
-   * not keep.
+   * Silent — this order is off the market, drop the card.
+   *
+   * The socket carries the same news as REQUEST_LOST / REQUEST_CLOSED, but a
+   * backgrounded driver has no socket, and the ORDER_AVAILABLE tray entry is
+   * still sitting on their phone advertising a job they can no longer take.
+   *
+   * Data-only, and sharing ORDER_AVAILABLE's collapse key so an offer still
+   * queued for an offline device is replaced rather than delivered after the
+   * fact. Clearing the entry already displayed is the app's job: it drew the
+   * notification through Notifee and can cancel it by the same id.
    */
+  ORDER_REMOVED: 'ORDER_REMOVED',
   /** The driver collected the parcel. */
   ORDER_PICKED_UP: 'ORDER_PICKED_UP',
   ORDER_DELIVERED: 'ORDER_DELIVERED',

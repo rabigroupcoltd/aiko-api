@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PricingRule, VehicleType } from '@prisma/client';
 import { estimateRoadDistanceKm, round2 } from '../common/geo.util';
+import { SUPPORTED_VEHICLE_TYPES, isSupportedVehicleType } from '../common/vehicle-types';
 import { ResponsesService } from '../common/responses/responses.service';
 import {
   ServiceResult,
@@ -48,19 +49,46 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-  /** Creates a rule for every vehicle type that does not have one yet. */
+  /**
+   * Brings the rate cards in line with what Aiko currently dispatches.
+   *
+   * Two halves. Supported types that have no row get one, so a fresh database
+   * can quote before an admin opens the pricing screen. Unsupported types that
+   * *do* have a row — left over from when this was a ride-hailing app — are
+   * deactivated rather than deleted: `estimateAll` only returns active rules,
+   * so that is what takes cars and trucks out of the passenger's picker, and
+   * keeping the row means the old rate card is still there if the scope changes
+   * back.
+   *
+   * Existing supported rows are never overwritten. An admin's pricing is theirs.
+   */
   async ensureDefaults() {
-    const existing = await this.prisma.pricingRule.findMany({ select: { vehicleType: true } });
-    const present = new Set(existing.map((rule) => rule.vehicleType));
-    const missing = Object.values(VehicleType).filter((type) => !present.has(type));
-
-    if (missing.length === 0) return;
-
-    await this.prisma.pricingRule.createMany({
-      data: missing.map((vehicleType) => ({ vehicleType, ...DEFAULT_PRICING[vehicleType] })),
-      skipDuplicates: true,
+    const existing = await this.prisma.pricingRule.findMany({
+      select: { vehicleType: true, isActive: true },
     });
-    this.logger.log(`Seeded default pricing for: ${missing.join(', ')}`);
+
+    const present = new Set(existing.map((rule) => rule.vehicleType));
+    const missing = SUPPORTED_VEHICLE_TYPES.filter((type) => !present.has(type));
+
+    if (missing.length > 0) {
+      await this.prisma.pricingRule.createMany({
+        data: missing.map((vehicleType) => ({ vehicleType, ...DEFAULT_PRICING[vehicleType] })),
+        skipDuplicates: true,
+      });
+      this.logger.log(`Seeded default pricing for: ${missing.join(', ')}`);
+    }
+
+    const retired = existing
+      .filter((rule) => rule.isActive && !isSupportedVehicleType(rule.vehicleType))
+      .map((rule) => rule.vehicleType);
+
+    if (retired.length > 0) {
+      await this.prisma.pricingRule.updateMany({
+        where: { vehicleType: { in: retired } },
+        data: { isActive: false },
+      });
+      this.logger.log(`Deactivated pricing for unsupported types: ${retired.join(', ')}`);
+    }
   }
 
   async findAll(options: { activeOnly?: boolean } = {}): Promise<ServiceResult> {
@@ -116,6 +144,13 @@ export class PricingService implements OnModuleInit {
    */
   async getActiveRule(vehicleType: VehicleType): Promise<ServiceResult<PricingRule | string>> {
     try {
+      // Checked before the read so the message names the real reason. "Aiko
+      // does not carry cars" is actionable; "pricing is not configured" reads
+      // like an outage the caller should retry.
+      if (!isSupportedVehicleType(vehicleType)) {
+        return badRequest(`Aiko only dispatches ${SUPPORTED_VEHICLE_TYPES.join(' and ')} right now`);
+      }
+
       const rule = await this.prisma.pricingRule.findUnique({ where: { vehicleType } });
 
       if (!rule) return badRequest(`Pricing is not configured for ${vehicleType}`);

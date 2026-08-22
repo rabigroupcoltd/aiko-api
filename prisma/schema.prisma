@@ -204,6 +204,10 @@ model User {
   messages     RideMessage[]
   ratingsGiven RideRating[]  @relation("RatingsGiven")
   deviceTokens DeviceToken[]
+  auditLogs        AuditLog[]       @relation("AuditActor")
+  ticketsRaised    SupportTicket[]  @relation("TicketRequester")
+  ticketsAssigned  SupportTicket[]  @relation("TicketAssignee")
+  supportMessages  SupportMessage[] @relation("SupportSender")
 }
 
 /// Where to send a push. One row per app install, not per user: a handset that
@@ -423,6 +427,15 @@ model Order {
   /// The inverse — one driver → many orders — is just many rows pointing here.
   driverId           String?
   vehicleType        VehicleType
+  /// What the passenger is sending, in their own words.
+  ///
+  /// Aiko moves parcels, and the driver's first real question about a job is
+  /// what they are being asked to carry — a laptop and a gas cylinder are the
+  /// same distance and the same fare, and not the same decision. Free text
+  /// rather than a category enum: the pilot has no data yet on what people
+  /// actually send, and guessing the categories now would just force everything
+  /// into OTHER.
+  description        String?       @db.VarChar(500)
   pickupLocation     String
   dropoffLocation    String
   pickupLat          Float
@@ -468,6 +481,7 @@ model Order {
   messages     RideMessage[]
   ratings      RideRating[]
   driverActions DriverOrderAction[]
+  supportTickets SupportTicket[]
 
   @@index([status, createdAt])
   @@index([userId, createdAt])
@@ -584,4 +598,126 @@ model AnalyticsSnapshot {
   platformEarnings Float    @default(0)
   outstandingDebt  Float    @default(0)
   createdAt        DateTime @default(now())
+}
+
+// ---------------------------------------------------------------- admin ops
+
+/// What an admin action touched. Kept coarse on purpose: the point of an audit
+/// trail is to answer "who changed this thing" quickly, and a taxonomy with
+/// forty values makes that harder rather than easier.
+enum AuditEntity {
+  DRIVER
+  USER
+  ORDER
+  WALLET
+  PRICING
+  SUPPORT
+  SYSTEM
+}
+
+/// An admin did something that changed state.
+///
+/// Written by AuditService rather than by the services themselves, so a feature
+/// gains an audit trail by being called through the interceptor rather than by
+/// remembering to log. Append-only: nothing updates or deletes a row here, which
+/// is the only property that makes the log worth reading.
+model AuditLog {
+  id        String      @id @default(uuid())
+  /// The admin who acted. Nullable because a system job is a legitimate actor
+  /// and inventing a user id for it would be worse than admitting there is none.
+  actorId   String?
+  /// Denormalised so the log still reads correctly after the account is renamed
+  /// or removed — the trail records what was true when it happened.
+  actorName String?
+  actorRole String?
+  /// Dotted verb — `driver.kyc.approve`, `order.cancel`, `pricing.update`.
+  action    String
+  entity    AuditEntity
+  /// The row that changed, when a single row did.
+  entityId  String?
+  /// Human summary, rendered straight into the log table.
+  summary   String
+  /// Before/after, or the request body. Shape varies by action, which is why it
+  /// is Json rather than columns — this is read by people, not queried.
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  /// The log is read newest-first, and filtered by actor or by entity.
+  @@index([createdAt])
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}
+
+enum SupportStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum SupportPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// A customer or driver asked for help.
+///
+/// Deliberately not a chat thread with an order attached: most tickets are about
+/// an order, but the ones that are not — a driver disputing a debt, a customer
+/// who cannot sign in — are exactly the ones that matter most and would have no
+/// home in an order-scoped model.
+model SupportTicket {
+  id         String          @id @default(uuid())
+  /// Short, sequential, quotable over the phone. A uuid is unreadable aloud.
+  reference  String          @unique
+  requesterId String
+  /// Set when the ticket is about a specific delivery.
+  orderId    String?
+  subject    String
+  category   String?
+  status     SupportStatus   @default(OPEN)
+  priority   SupportPriority @default(NORMAL)
+  /// The admin who owns it. Null means nobody has picked it up.
+  assigneeId String?
+  /// Denormalised from the last message so the list does not need a join per row.
+  lastMessageAt DateTime     @default(now())
+  resolvedAt DateTime?
+  closedAt   DateTime?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  requester User             @relation("TicketRequester", fields: [requesterId], references: [id])
+  assignee  User?            @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  order     Order?           @relation(fields: [orderId], references: [id])
+  messages  SupportMessage[]
+
+  /// The queue view: open tickets, most recently active first.
+  @@index([status, lastMessageAt])
+  @@index([requesterId, createdAt])
+  @@index([assigneeId, status])
+}
+
+model SupportMessage {
+  id        String   @id @default(uuid())
+  ticketId  String
+  senderId  String
+  /// True when an admin wrote it. Stored rather than derived from the sender's
+  /// role, because an admin who later loses the role must not retroactively
+  /// turn their replies into customer messages.
+  fromStaff Boolean  @default(false)
+  /// Staff-only note. Never returned to the requester.
+  internal  Boolean  @default(false)
+  body      String
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender User          @relation("SupportSender", fields: [senderId], references: [id])
+
+  @@index([ticketId, createdAt])
 }

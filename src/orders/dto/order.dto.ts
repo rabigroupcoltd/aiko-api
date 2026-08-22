@@ -43,6 +43,17 @@ export class CreateOrderDto {
   @IsEnum(VEHICLE_TYPES)
   vehicleType: (typeof VEHICLE_TYPES)[number];
 
+  @ApiPropertyOptional({
+    example: 'Two cartons of frozen chicken. Handle upright.',
+    maxLength: 500,
+    description:
+      'What is being sent, in the passenger’s own words. Shown on the driver’s card: a laptop and a gas cylinder are the same distance and the same fare, and not the same decision.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string;
+
   @ApiProperty({ example: 'Ikeja City Mall, Alausa, Lagos', maxLength: 500 })
   @IsString()
   @MaxLength(500)

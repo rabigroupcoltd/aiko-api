@@ -23,6 +23,7 @@ import {
   MAX_RESERVED_ORDERS_PER_DRIVER,
   SKIP_COOLDOWN_MINUTES,
 } from './dispatch.constants';
+import { DispatchStatus, deriveDispatchStatus } from './driver-status.util';
 import { MarketplaceQueryDto } from './dto/marketplace.dto';
 import { CompatibilityResult, OrderCompatibilityService } from './order-compatibility.service';
 import { RouteOptimizerService } from './route-optimizer.service';
@@ -32,6 +33,8 @@ import { Point, RoutableOrder, bestRouteLengthKm, stopsFor } from './route.util'
 export interface MarketplaceCard {
   id: string;
   vehicleType: string;
+  /** What the passenger is sending. Null on orders raised before the field existed. */
+  description: string | null;
   pickupLocation: string;
   pickupLat: number;
   pickupLng: number;
@@ -93,7 +96,7 @@ export class MarketplaceService {
 
       const driver = gate.body as Driver;
 
-      const origin = await this.resolveOrigin(driver.id, query);
+      const origin = await this.resolveOrigin(driver, query);
       if (!origin) {
         return badRequest('We do not know where you are yet — turn location on and try again');
       }
@@ -191,7 +194,7 @@ export class MarketplaceService {
         );
       }
 
-      const origin = await this.routes.driverPosition(driver.id);
+      const origin = await this.routes.driverPosition(driver.id, driver.vehicleType);
       if (!origin) return badRequest('We do not know where you are yet');
 
       const currentOrders = await this.routes.activeOrders(driver.id);
@@ -376,7 +379,9 @@ export class MarketplaceService {
   }
 
   /** OFFLINE / AVAILABLE / BUSY — §26, derived rather than stored. */
-  async dispatchStatus(driver: Driver, heldCount?: number): Promise<'OFFLINE' | 'AVAILABLE' | 'BUSY'> {
+  async dispatchStatus(driver: Driver, heldCount?: number): Promise<DispatchStatus> {
+    // Short-circuit before querying: a driver who is offline, blocked or
+    // unapproved is OFFLINE whatever they are holding.
     if (!driver.isAvailable || driver.isBlocked || driver.kycStatus !== KycStatus.APPROVED) {
       return 'OFFLINE';
     }
@@ -387,14 +392,22 @@ export class MarketplaceService {
         where: { driverId: driver.id, status: { in: DRIVER_ACTIVE_STATUSES } },
       }));
 
-    if (held >= MAX_RESERVED_ORDERS_PER_DRIVER) return 'BUSY';
+    // Only reached when the driver is otherwise eligible, so the legacy count
+    // is the one remaining question.
+    const legacy =
+      held >= MAX_RESERVED_ORDERS_PER_DRIVER
+        ? 0
+        : await this.prisma.order.count({
+            where: { driverId: driver.id, status: { in: LEGACY_ACTIVE_STATUSES } },
+          });
 
-    // A driver mid-way through a legacy bid-flow trip is not free either.
-    const legacy = await this.prisma.order.count({
-      where: { driverId: driver.id, status: { in: LEGACY_ACTIVE_STATUSES } },
+    return deriveDispatchStatus({
+      isAvailable: driver.isAvailable,
+      isBlocked: driver.isBlocked,
+      kycStatus: driver.kycStatus,
+      heldCount: held,
+      legacyCount: legacy,
     });
-
-    return legacy > 0 ? 'BUSY' : 'AVAILABLE';
   }
 
   /** Orders this driver skipped, for the history tab. */
@@ -441,9 +454,9 @@ export class MarketplaceService {
    * anything the server has — but it is only ever used to place the driver, and
    * never to decide what they are allowed to do.
    */
-  private async resolveOrigin(driverId: string, query: MarketplaceQueryDto): Promise<Point | null> {
+  private async resolveOrigin(driver: Driver, query: MarketplaceQueryDto): Promise<Point | null> {
     if (query.lat != null && query.lng != null) return { lat: query.lat, lng: query.lng };
-    return this.routes.driverPosition(driverId);
+    return this.routes.driverPosition(driver.id, driver.vehicleType);
   }
 
   /**
@@ -498,6 +511,7 @@ export class MarketplaceService {
     return {
       id: order.id,
       vehicleType: order.vehicleType,
+      description: order.description,
       pickupLocation: order.pickupLocation,
       pickupLat: order.pickupLat,
       pickupLng: order.pickupLng,

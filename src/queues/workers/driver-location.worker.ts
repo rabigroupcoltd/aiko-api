@@ -7,6 +7,7 @@ import {
   JOB_FLUSH_LOCATIONS,
   LOCATION_FLUSH_INTERVAL_MS,
   QUEUE_DRIVER_LOCATION,
+  WORKER_OPTIONS,
 } from '../queues.constants';
 
 /**
@@ -14,7 +15,7 @@ import {
  * thousands of writes a minute, so Redis absorbs them and this job flushes the
  * latest position per driver on an interval.
  */
-@Processor(QUEUE_DRIVER_LOCATION)
+@Processor(QUEUE_DRIVER_LOCATION, WORKER_OPTIONS)
 export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(DriverLocationWorker.name);
 
@@ -45,11 +46,15 @@ export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
   }
 
   async process(): Promise<{ flushed: number }> {
-    const driverIds = await this.redis.getAllTrackedDriverIds();
-    if (driverIds.length === 0) return { flushed: 0 };
+    const tracked = await this.redis.getAllTrackedDrivers();
+    if (tracked.length === 0) return { flushed: 0 };
 
+    // The vehicle type comes back with the id, so each read hits one partition
+    // rather than probing every one of them.
     const locations = await Promise.all(
-      driverIds.map((driverId) => this.redis.getDriverLocation(driverId)),
+      tracked.map(({ driverId, vehicleType }) =>
+        this.redis.getDriverLocation(driverId, vehicleType),
+      ),
     );
 
     const writable = locations.filter(

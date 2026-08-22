@@ -2,14 +2,18 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { RideService } from '../../ride/ride.service';
-import { MATCHING_RETRIES, QUEUE_RIDE_MATCHING } from '../queues.constants';
+import {
+  MATCHING_RETRIES,
+  QUEUE_RIDE_MATCHING,
+  WORKER_OPTIONS,
+} from '../queues.constants';
 import { QueuesService } from '../queues.service';
 
 /**
  * Second chance for requests that found no driver. Each attempt widens the
  * radius; after MATCHING_RETRIES the request is left to time out.
  */
-@Processor(QUEUE_RIDE_MATCHING)
+@Processor(QUEUE_RIDE_MATCHING, WORKER_OPTIONS)
 export class RideMatchingWorker extends WorkerHost {
   private readonly logger = new Logger(RideMatchingWorker.name);
 

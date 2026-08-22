@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "verify:ws-docs": "ts-node src/realtime/verify-catalogue.ts",
     "verify:concurrency": "tsc && node dist/dispatch/verify-concurrency.js",
+    "verify:geo": "tsc && node dist/redis/verify-geo-partitions.js",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "prisma:generate": "prisma generate",
@@ -52,8 +53,7 @@
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "socket.io": "^4.8.3",
-    "typeorm": "^0.3.28"
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@nestjs/testing": "^10.4.22",

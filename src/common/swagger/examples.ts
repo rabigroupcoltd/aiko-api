@@ -442,12 +442,12 @@ export const PRICING_RULES_EXAMPLE = [
   {
     ...PRICING_RULE_EXAMPLE,
     id: '8e1b3c47-25da-4f90-9367-b0d4a8e5c213',
-    vehicleType: 'BICYCLE',
-    baseFare: 150,
-    perKm: 70,
+    vehicleType: 'BIKE',
+    baseFare: 300,
+    perKm: 100,
     perMinute: 8,
-    minimumFare: 300,
-    avgSpeedKph: 15,
+    minimumFare: 400,
+    avgSpeedKph: 30,
   },
 ];
 
@@ -474,16 +474,16 @@ export const FARE_QUOTE_ALL_EXAMPLE = [
   FARE_QUOTE_EXAMPLE,
   {
     ...FARE_QUOTE_EXAMPLE,
-    vehicleType: 'BICYCLE',
-    durationMins: 22.88,
-    fare: 780,
-    platformFee: 78,
-    driverEarnings: 702,
+    vehicleType: 'BIKE',
+    durationMins: 11.44,
+    fare: 1000,
+    platformFee: 100,
+    driverEarnings: 900,
     breakdown: {
-      baseFare: 150,
-      distanceCharge: 400.4,
-      timeCharge: 183.04,
-      bookingFee: 50,
+      baseFare: 300,
+      distanceCharge: 572,
+      timeCharge: 91.52,
+      bookingFee: 0,
       surgeMultiplier: 1,
       minimumFareApplied: false,
     },
@@ -806,10 +806,10 @@ export const ANALYTICS_VEHICLE_TYPES_EXAMPLE = [
     platformEarnings: 942060,
   },
   {
-    vehicleType: 'BICYCLE',
+    vehicleType: 'BIKE',
     isActive: true,
-    baseFare: 150,
-    perKm: 70,
+    baseFare: 300,
+    perKm: 100,
     drivers: 103,
     totalOrders: 3540,
     completedOrders: 3099,
@@ -834,7 +834,7 @@ export const ANALYTICS_LOW_PERFORMERS_EXAMPLE = [
   {
     id: '61b0e7d4-9a35-42c8-b71e-5f8c0a2d6934',
     name: 'Musa Bello',
-    vehicleType: 'BICYCLE',
+    vehicleType: 'BIKE',
     totalTrips: 12,
     rating: 3.1,
     currentDebt: 4200,
@@ -1015,4 +1015,129 @@ export const ORDER_ETA_EXAMPLE = {
   pickupMinutes: 8,
   deliveryMinutes: 24,
   driverHandlingOtherOrders: true,
+};
+
+// ------------------------------------------------------------------- admin
+
+const ADMIN_ID = '7f1c2e93-4a08-4b5d-9e26-3c8f0a1b7d54';
+
+export const AUDIT_LOG_EXAMPLE = {
+  id: 'c2a7f019-53b8-4e6d-91a4-8f0b3d7c2e65',
+  actorId: ADMIN_ID,
+  actorName: 'Umar Rabi',
+  actorRole: 'ADMIN',
+  action: 'driver.kyc.approve',
+  entity: 'DRIVER',
+  entityId: DRIVER_EXAMPLE.id,
+  summary: 'Approved KYC for Ibrahim Musa',
+  metadata: { previousStatus: 'PENDING', newStatus: 'APPROVED' },
+  ipAddress: '102.89.34.12',
+  userAgent: 'Mozilla/5.0',
+  createdAt: '2026-08-21T09:14:02.114Z',
+};
+
+export const AUDIT_LOG_PAGE_EXAMPLE = {
+  data: [AUDIT_LOG_EXAMPLE],
+  meta: { page: 1, limit: 25, total: 1, pages: 1 },
+};
+
+export const SUPPORT_TICKET_EXAMPLE = {
+  id: 'e4b7a208-6c15-4d93-8a7e-2f9c0b1d6a37',
+  reference: 'AIK-1042',
+  requesterId: USER_ID,
+  orderId: ORDER_ID,
+  subject: 'Driver never arrived at the pickup',
+  category: 'DELIVERY',
+  status: 'OPEN',
+  priority: 'HIGH',
+  assigneeId: null,
+  lastMessageAt: '2026-08-21T10:02:44.900Z',
+  resolvedAt: null,
+  closedAt: null,
+  createdAt: '2026-08-21T09:58:11.220Z',
+  requester: { id: USER_ID, name: 'Amina Yusuf', phone: '+2348031234567' },
+  assignee: null,
+  messageCount: 3,
+};
+
+export const SUPPORT_TICKET_PAGE_EXAMPLE = {
+  data: [SUPPORT_TICKET_EXAMPLE],
+  meta: { page: 1, limit: 25, total: 1, pages: 1 },
+  counts: { OPEN: 1, PENDING: 0, RESOLVED: 0, CLOSED: 0 },
+};
+
+export const SUPPORT_MESSAGE_EXAMPLE = {
+  id: 'a91f3b60-7d24-4c85-9e13-0b6a2f8c4d19',
+  ticketId: 'e4b7a208-6c15-4d93-8a7e-2f9c0b1d6a37',
+  senderId: USER_ID,
+  fromStaff: false,
+  internal: false,
+  body: 'I waited forty minutes and nobody came.',
+  createdAt: '2026-08-21T10:02:44.900Z',
+  sender: { id: USER_ID, name: 'Amina Yusuf' },
+};
+
+export const SUPPORT_TICKET_DETAIL_EXAMPLE = {
+  ...SUPPORT_TICKET_EXAMPLE,
+  messages: [SUPPORT_MESSAGE_EXAMPLE],
+  order: {
+    id: ORDER_ID,
+    status: 'CANCELLED',
+    pickupLocation: 'Minna Central Market, Minna',
+    dropoffLocation: 'Bosso Estate, Minna',
+    fare: 3500,
+  },
+};
+
+export const ADMIN_SUMMARY_EXAMPLE = {
+  orders: { today: 42, yesterday: 37, week: 261, total: 4820, changePercent: '13.5' },
+  revenue: { today: 147000, week: 913500, total: 16870000, currency: 'NGN' },
+  drivers: { total: 86, approved: 71, online: 23, pendingKyc: 9, blocked: 2 },
+  users: { total: 1940, newThisWeek: 63 },
+  support: { open: 4, pending: 2, urgent: 1 },
+  liveOrders: { searching: 3, reserved: 5, inTransit: 7 },
+};
+
+export const ADMIN_ACTIVITY_EXAMPLE = [
+  {
+    type: 'ORDER_COMPLETED',
+    at: '2026-08-21T10:41:09.000Z',
+    summary: 'Order delivered to Bosso Estate, Minna',
+    entityId: ORDER_ID,
+    amount: 3500,
+  },
+  {
+    type: 'DRIVER_REGISTERED',
+    at: '2026-08-21T10:22:47.000Z',
+    summary: 'Ibrahim Musa registered a TRICYCLE',
+    entityId: DRIVER_EXAMPLE.id,
+    amount: null,
+  },
+];
+
+export const SOCKET_ACTIVITY_EXAMPLE = {
+  connections: { total: 34, drivers: 21, passengers: 13 },
+  dispatch: {
+    openOrders: 3,
+    driversInPool: 21,
+    poolByVehicle: { BIKE: 14, TRICYCLE: 7 },
+  },
+  recent: [
+    {
+      at: '2026-08-21T10:44:02.881Z',
+      code: 'REQUEST_NEW',
+      audience: 'driver',
+      recipients: 6,
+      entityId: ORDER_ID,
+      summary: 'New request near you',
+    },
+    {
+      at: '2026-08-21T10:44:19.402Z',
+      code: 'REQUEST_LOST',
+      audience: 'driver',
+      recipients: 5,
+      entityId: ORDER_ID,
+      summary: 'Another driver took this request',
+    },
+  ],
 };

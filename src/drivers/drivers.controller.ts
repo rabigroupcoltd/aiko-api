@@ -183,6 +183,130 @@ export class DriversController {
     }
   }
 
+  // ------------------------------------------------------- shift lifecycle
+
+  /**
+   * The shift endpoints, all self-scoped.
+   *
+   * No `:id` in any of these paths. The token identifies the driver, so the app
+   * never has to hold a driver id and can never write to somebody else's
+   * presence by caching a stale one. `PATCH /drivers/:id/availability` below is
+   * the admin equivalent and keeps its id, because an admin genuinely is acting
+   * on another account.
+   *
+   * `GET /drivers/state` is declared before `GET /drivers/:id` on purpose —
+   * Nest matches routes in declaration order, and the id pattern would
+   * otherwise swallow the literal.
+   */
+  @Get('state')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Everything the driver app needs on open',
+    description:
+      'One call to rebuild the whole screen: whether the shift is running, what is being carried, where the driver was last seen, and how much capacity is left. This is the reconnect path — the socket only pushes notifications and holds no state, so after a drop, a cold start, or a return from the background, call this and rebuild from the answer.\n\n`isAvailable` is the shift switch as the driver last set it; `presence.online` is whether Redis still holds a live heartbeat. They disagree when the app was killed mid-shift — the driver is still notionally on duty but has dropped out of the dispatch pool, and the app should resume heartbeats rather than ask them to toggle back on.',
+  })
+  @ApiOkEnvelope({
+    driverId: DRIVER_EXAMPLE.id,
+    vehicleType: 'TRICYCLE',
+    status: 'AVAILABLE',
+    isAvailable: true,
+    presence: { online: true, heartbeatTtlSeconds: 90 },
+    kycStatus: 'APPROVED',
+    isBlocked: false,
+    canGoOnline: true,
+    held: 1,
+    capacity: 3,
+    atCapacity: false,
+    activeOrders: [
+      {
+        id: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33',
+        status: 'RESERVED',
+        description: 'Two cartons of frozen chicken. Handle upright.',
+        pickupLocation: 'Minna Central Market, Minna',
+        dropoffLocation: 'Bosso Estate, Minna',
+        distanceKm: 8.4,
+        driverEarnings: 3150,
+        currency: 'NGN',
+      },
+    ],
+    lastLocation: { lat: 9.6139, lng: 6.5569, recordedAt: '2026-08-21T07:59:12.310Z' },
+  })
+  @ApiUnauthorized()
+  @ApiForbidden('You do not have a driver profile')
+  async getState(@CurrentUser('sub') userId: string) {
+    try {
+      const result = await this.driversService.getState(userId);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('online')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Start a shift',
+    description:
+      'Adds the driver to the Redis matching pool and sweeps for work already open nearby — a driver coming online mid-search is offered requests raised before they arrived, which the original fan-out could never have reached them with. Requires an approved, unblocked profile.',
+  })
+  @ApiOkEnvelope({ ...DRIVER_EXAMPLE, isAvailable: true }, { message: 'You are now online' })
+  @ApiUnauthorized()
+  @ApiForbidden('KYC must be approved before going online')
+  async goOnline(@CurrentUser('sub') userId: string) {
+    try {
+      const result = await this.driversService.goOnline(userId);
+      return this.response.handle(result, { message: 'You are now online' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('offline')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'End a shift',
+    description:
+      'Removes the driver from the matching pool. Orders already held are untouched — going offline stops new work being offered, it does not abandon a delivery in progress.',
+  })
+  @ApiOkEnvelope({ ...DRIVER_EXAMPLE, isAvailable: false }, { message: 'You are now offline' })
+  @ApiUnauthorized()
+  @ApiForbidden('You do not have a driver profile')
+  async goOffline(@CurrentUser('sub') userId: string) {
+    try {
+      const result = await this.driversService.goOffline(userId);
+      return this.response.handle(result, { message: 'You are now offline' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('heartbeat')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Stay in the dispatch pool without moving',
+    description:
+      'Refreshes the presence TTL. A position fix does this as a side effect, so this is for the driver who is parked, waiting, or indoors with a poor GPS lock and has no new fix worth sending — it costs two keys rather than a whole geo write. Without it they silently drop out of the pool after DRIVER_HEARTBEAT_TTL seconds while the app still says "online".',
+  })
+  @ApiOkEnvelope(
+    { driverId: DRIVER_EXAMPLE.id, online: true, expiresInSeconds: 90 },
+    { message: 'Heartbeat received' },
+  )
+  @ApiUnauthorized()
+  @ApiForbidden('Driver is blocked')
+  @ApiValidationError('You are offline — go online first')
+  async heartbeat(@CurrentUser('sub') userId: string) {
+    try {
+      const result = await this.driversService.heartbeat(userId);
+      return this.response.handle(result, { message: 'Heartbeat received' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
   @Get()
   @ApiOperation({
     summary: 'List drivers',
@@ -325,9 +449,9 @@ export class DriversController {
   @ApiOkEnvelope({ ...DRIVER_EXAMPLE, kycStatus: 'APPROVED', kycRejectionReason: null }, { message: 'KYC approved' })
   @ApiAdminErrors()
   @ApiNotFound('Driver not found')
-  async approveKyc(@Param('id') id: string) {
+  async approveKyc(@Param('id') id: string, @CurrentUser() actor: JwtUser) {
     try {
-      const result = await this.driversService.approveKyc(id);
+      const result = await this.driversService.approveKyc(id, actor);
       return this.response.handle(result, { message: 'KYC approved' });
     } catch (e) {
       return this.response.exception(e);
@@ -354,9 +478,17 @@ export class DriversController {
   )
   @ApiAdminErrors()
   @ApiNotFound('Driver not found')
-  async rejectKyc(@Param('id') id: string, @Body() dto: KycApprovalDto) {
+  async rejectKyc(
+    @Param('id') id: string,
+    @Body() dto: KycApprovalDto,
+    @CurrentUser() actor: JwtUser,
+  ) {
     try {
-      const result = await this.driversService.rejectKyc(id, dto.reason || 'KYC rejected');
+      const result = await this.driversService.rejectKyc(
+        id,
+        dto.reason || 'KYC rejected',
+        actor,
+      );
       return this.response.handle(result, { message: 'KYC rejected' });
     } catch (e) {
       return this.response.exception(e);
@@ -499,9 +631,13 @@ export class DriversController {
   @ApiValidationError('isBlocked must be a boolean value')
   @ApiAdminErrors()
   @ApiNotFound('Driver not found')
-  async blockDriver(@Param('id') id: string, @Body() dto: BlockDriverDto) {
+  async blockDriver(
+    @Param('id') id: string,
+    @Body() dto: BlockDriverDto,
+    @CurrentUser() actor: JwtUser,
+  ) {
     try {
-      const result = await this.driversService.blockDriver(id, dto.isBlocked);
+      const result = await this.driversService.blockDriver(id, dto.isBlocked, actor);
       return this.response.handle(result, {
         message: dto.isBlocked ? 'Driver blocked' : 'Driver unblocked',
       });

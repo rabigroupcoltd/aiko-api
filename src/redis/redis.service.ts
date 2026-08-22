@@ -8,15 +8,25 @@ import {
 } from './dto/driver-location.dto';
 import {
   ALL_AVAILABLE_KEYS,
-  GEO_KEY,
+  ALL_GEO_KEYS,
   HEARTBEAT_TTL_SECONDS,
+  HOT_GEO_KEYS,
+  OFFERED_TTL_SECONDS,
   availableKey,
+  geoKey,
   heartbeatKey,
   metaKey,
+  offeredKey,
 } from './redis.keys';
 import { REDIS_CLIENT } from './redis.provider';
 
 type GeoSearchRow = [driverId: string, distance: string, coords: [string, string]];
+
+/** A driver in the presence index, with the partition they live in. */
+export interface TrackedDriver {
+  driverId: string;
+  vehicleType: VehicleType;
+}
 
 /**
  * Real-time driver presence. Redis is the source of truth for "where is a
@@ -32,70 +42,133 @@ export class RedisService {
     return this.redis;
   }
 
-  /** GEOADD + metadata + heartbeat in a single round trip. */
-  async saveDriverLocation(driverId: string, dto: DriverLocationDto): Promise<void> {
+  /**
+   * GEOADD + metadata + heartbeat in a single round trip.
+   *
+   * The position goes into the index for this driver's vehicle type, and is
+   * removed from every other one. That ZREM is what keeps a driver who
+   * re-registered their keke as an okada from lingering in the keke radius
+   * searches — a sorted set member has no TTL, so nothing else would ever
+   * evict them.
+   */
+  async saveDriverLocation(
+    driverId: string,
+    vehicleType: VehicleType,
+    dto: DriverLocationDto,
+  ): Promise<void> {
     const recordedAt = dto.recordedAt || new Date().toISOString();
 
-    await this.redis
+    const pipeline = this.redis
       .multi()
-      .geoadd(GEO_KEY, dto.lng, dto.lat, driverId)
+      .geoadd(geoKey(vehicleType), dto.lng, dto.lat, driverId)
       .hset(metaKey(driverId), {
         heading: dto.heading ?? '',
         speedKph: dto.speedKph ?? '',
         accuracyMeters: dto.accuracyMeters ?? '',
         recordedAt,
       })
-      .set(heartbeatKey(driverId), '1', 'EX', HEARTBEAT_TTL_SECONDS)
-      .exec();
+      .set(heartbeatKey(driverId), '1', 'EX', HEARTBEAT_TTL_SECONDS);
+
+    // Only the partitions dispatch actually reads — see HOT_GEO_KEYS. Teardown
+    // in removeDriver still sweeps the full enum.
+    HOT_GEO_KEYS.filter((key) => key !== geoKey(vehicleType)).forEach((key) =>
+      pipeline.zrem(key, driverId),
+    );
+
+    await pipeline.exec();
   }
 
-  async getDriverLocation(driverId: string): Promise<DriverNearbyResponse | null> {
+  /**
+   * One driver's last known position.
+   *
+   * `vehicleType` narrows the read to a single index. Callers that already know
+   * it — anything holding a Driver row — should pass it; the rest fall back to
+   * checking every partition, which is two GEOPOS calls in one pipeline rather
+   * than one, and still cheaper than looking the driver up in Postgres first.
+   */
+  async getDriverLocation(
+    driverId: string,
+    vehicleType?: VehicleType,
+  ): Promise<DriverNearbyResponse | null> {
+    const keys = vehicleType ? [geoKey(vehicleType)] : ALL_GEO_KEYS;
+
+    const pipeline = this.redis.pipeline();
+    keys.forEach((key) => pipeline.geopos(key, driverId));
     const [positions, meta] = await Promise.all([
-      this.redis.geopos(GEO_KEY, driverId),
+      pipeline.exec(),
       this.redis.hgetall(metaKey(driverId)),
     ]);
 
-    const position = positions?.[0];
-    if (!position) return null;
+    // GEOPOS answers with a null entry for a member the key has never seen, so
+    // the first non-null across the partitions is the driver's real position.
+    const found = positions
+      ?.map((result) => (result?.[1] as [string, string][] | null)?.[0])
+      .find((position) => position != null);
+
+    if (!found) return null;
 
     return {
       driverId,
-      lng: parseFloat(position[0]),
-      lat: parseFloat(position[1]),
+      lng: parseFloat(found[0]),
+      lat: parseFloat(found[1]),
       distanceKm: null,
       ...parseMeta(meta),
     };
   }
 
   /**
-   * GEOSEARCH, then drop anyone whose heartbeat expired or who is not in the
-   * availability set for the requested vehicle type.
+   * Drivers within a radius, nearest first.
+   *
+   * When `vehicleType` is given — which is every dispatch path, because an
+   * order names the vehicle it needs — this reads exactly one partition. The
+   * radius query then only ever walks candidates that could actually take the
+   * job, instead of scanning the whole fleet and discarding the wrong vehicles
+   * afterwards in application code.
+   *
+   * Heartbeat and availability are still checked after the fact: neither lives
+   * in the geo index, and a sorted set member outlives the TTL of the keys that
+   * say whether that driver is still online.
    */
   async getDriversNearby(query: NearbyDriversQueryDto): Promise<DriverNearbyResponse[]> {
     const limit = query.limit ?? 20;
+    const vehicleType = query.vehicleType as VehicleType | undefined;
+    const keys = vehicleType ? [geoKey(vehicleType)] : ALL_GEO_KEYS;
 
     // Over-fetch: filtering happens after the radius query, so asking for
     // exactly `limit` would under-return once offline drivers are removed.
-    const raw = (await this.redis.call(
-      'GEOSEARCH',
-      GEO_KEY,
-      'FROMLONLAT',
-      String(query.lng),
-      String(query.lat),
-      'BYRADIUS',
-      String(query.radiusKm),
-      'km',
-      'ASC',
-      'COUNT',
-      String(limit * 4),
-      'WITHDIST',
-      'WITHCOORD',
-    )) as GeoSearchRow[];
+    const perKey = String(limit * 4);
 
-    if (!raw?.length) return [];
+    const results = await Promise.all(
+      keys.map(
+        (key) =>
+          this.redis.call(
+            'GEOSEARCH',
+            key,
+            'FROMLONLAT',
+            String(query.lng),
+            String(query.lat),
+            'BYRADIUS',
+            String(query.radiusKm),
+            'km',
+            'ASC',
+            'COUNT',
+            perKey,
+            'WITHDIST',
+            'WITHCOORD',
+          ) as Promise<GeoSearchRow[]>,
+      ),
+    );
+
+    // Each partition comes back sorted, but a merge of two sorted lists is not.
+    const raw = results
+      .flat()
+      .filter(Boolean)
+      .sort((a, b) => parseFloat(a[1]) - parseFloat(b[1]));
+
+    if (raw.length === 0) return [];
 
     const candidateIds = raw.map(([driverId]) => driverId);
-    const online = await this.filterOnline(candidateIds, query.vehicleType as VehicleType | undefined);
+    const online = await this.filterOnline(candidateIds, vehicleType);
 
     const pipeline = this.redis.pipeline();
     raw.forEach(([driverId]) => pipeline.hgetall(metaKey(driverId)));
@@ -162,19 +235,84 @@ export class RedisService {
     return this.redis.sunion(...ALL_AVAILABLE_KEYS);
   }
 
-  /** Full teardown when a driver goes offline or is blocked. */
+  /**
+   * Full teardown when a driver goes offline or is blocked.
+   *
+   * Clears every partition rather than the one matching their current vehicle
+   * type: a driver who changed vehicle at some point may be in either, and a
+   * teardown that misses one leaves a ghost in the radius searches.
+   */
   async removeDriver(driverId: string): Promise<void> {
     const pipeline = this.redis.pipeline();
-    pipeline.zrem(GEO_KEY, driverId);
+    ALL_GEO_KEYS.forEach((key) => pipeline.zrem(key, driverId));
     pipeline.del(metaKey(driverId));
     pipeline.del(heartbeatKey(driverId));
     ALL_AVAILABLE_KEYS.forEach((key) => pipeline.srem(key, driverId));
     await pipeline.exec();
   }
 
-  /** Snapshot of every tracked driver — used by the location flush job. */
-  async getAllTrackedDriverIds(): Promise<string[]> {
-    return this.redis.zrange(GEO_KEY, 0, -1);
+  /**
+   * Snapshot of every tracked driver — used by the location flush job.
+   *
+   * Returns the partition alongside the id so the caller can read each
+   * position from one key instead of probing all of them per driver.
+   */
+  // ------------------------------------------------------ offer bookkeeping
+
+  /**
+   * Record that these drivers were shown an order.
+   *
+   * Called on every dispatch pass, so the set accumulates the union of everyone
+   * who ever saw the card rather than only the latest ring. That union is the
+   * audience for REQUEST_LOST — a driver who saw the first pass and has since
+   * driven out of range still holds the card, and still has to be told it is
+   * gone.
+   */
+  async addOfferedDrivers(orderId: string, driverIds: string[]): Promise<void> {
+    if (!driverIds.length) return;
+
+    await this.redis
+      .multi()
+      .sadd(offeredKey(orderId), ...driverIds)
+      .expire(offeredKey(orderId), OFFERED_TTL_SECONDS)
+      .exec();
+  }
+
+  /** Everyone who was shown this order, winner included. */
+  async getOfferedDrivers(orderId: string): Promise<string[]> {
+    return this.redis.smembers(offeredKey(orderId));
+  }
+
+  /**
+   * Read the audience and drop the set in one round trip.
+   *
+   * Read-then-delete rather than two calls because the order is closing either
+   * way: whoever asks for the audience is about to notify it, and a second
+   * caller arriving afterwards would otherwise re-notify everyone.
+   */
+  async takeOfferedDrivers(orderId: string): Promise<string[]> {
+    const [members] = await this.redis
+      .multi()
+      .smembers(offeredKey(orderId))
+      .del(offeredKey(orderId))
+      .exec() as [[Error | null, string[]], [Error | null, number]];
+
+    return (members?.[1] as string[]) ?? [];
+  }
+
+  async getAllTrackedDrivers(): Promise<TrackedDriver[]> {
+    // Every partition, including unsupported ones — a legacy driver's position
+    // should still reach Postgres.
+    const types = Object.values(VehicleType);
+
+    const pipeline = this.redis.pipeline();
+    types.forEach((vehicleType) => pipeline.zrange(geoKey(vehicleType), 0, -1));
+    const results = await pipeline.exec();
+
+    return types.flatMap((vehicleType, index) => {
+      const ids = (results?.[index]?.[1] as string[] | undefined) ?? [];
+      return ids.map((driverId) => ({ driverId, vehicleType }));
+    });
   }
 }
 
