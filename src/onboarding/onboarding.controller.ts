@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/current-user.decorator';
 import { ResponsesService } from '../common/responses/responses.service';
 import {
@@ -19,6 +20,8 @@ import {
   ONBOARDING_STATE_RIDER_DOCS_EXAMPLE,
   ONBOARDING_STATE_RIDER_DONE_EXAMPLE,
 } from '../common/swagger/examples';
+import { imageFilePipe, imageUploadOptions } from '../common/upload';
+import { UploadFile } from '../storage/storage.types';
 import { UpdateOnboardingDto } from './dto/onboarding.dto';
 import { OnboardingService } from './onboarding.service';
 
@@ -86,6 +89,30 @@ export class OnboardingController {
     try {
       const result = await this.onboardingService.getState(userId);
       return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('photo')
+  @UseInterceptors(FileInterceptor('photo', imageUploadOptions))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload the onboarding selfie',
+    description:
+      'Multipart, one file under the `photo` field. Uploads it to object storage and saves the resulting URL/key against the account in one call — the client never sees the raw url/key round trip that `PATCH /onboarding` otherwise expects for this step. Returns the recomputed onboarding state, same as `PATCH /onboarding`.',
+  })
+  @ApiOkEnvelope(ONBOARDING_STATE_EXAMPLE, { message: 'Onboarding updated' })
+  @ApiValidationError('A photo is required')
+  @ApiUnauthorized()
+  @ApiNotFound('User not found')
+  async uploadPhoto(
+    @CurrentUser('sub') userId: string,
+    @UploadedFile(imageFilePipe) photo?: UploadFile,
+  ) {
+    try {
+      const result = await this.onboardingService.uploadPhoto(userId, photo);
+      return this.response.handle(result, { message: 'Onboarding updated' });
     } catch (e) {
       return this.response.exception(e);
     }

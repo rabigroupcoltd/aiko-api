@@ -54,6 +54,18 @@ export const HEARTBEAT_TTL_SECONDS = Number(process.env.DRIVER_HEARTBEAT_TTL || 
 export const heartbeatKey = (driverId: string) => `driver:heartbeat:${driverId}`;
 export const metaKey = (driverId: string) => `driver:${driverId}:meta`;
 
+/**
+ * Set once the mid-trip watchdog has already raised the alarm for this
+ * driver's current disappearance, so a job that ticks every
+ * DRIVER_WATCHDOG_INTERVAL_MS does not re-notify the same riders every pass
+ * while the driver stays dark. Cleared the moment a heartbeat proves they are
+ * back — see DriverWatchdogWorker.
+ */
+export const darkFlagKey = (driverId: string) => `driver:${driverId}:dark`;
+
+/** Safety-net expiry only — the flag is meant to be cleared explicitly on reconnect. */
+export const DARK_FLAG_TTL_SECONDS = Number(process.env.DRIVER_DARK_FLAG_TTL || 24 * 60 * 60);
+
 /** Availability is tracked per vehicle type so a keke order never matches an okada. */
 export const availableKey = (vehicleType: VehicleType) => `drivers:available:${vehicleType}`;
 

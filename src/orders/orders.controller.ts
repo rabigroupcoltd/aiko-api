@@ -106,6 +106,25 @@ export class OrdersController {
     }
   }
 
+  @Get('unread')
+  @ApiOperation({
+    summary: 'Unread chat messages, per order',
+    description:
+      'One call covering every open chat the caller is party to — a driver holding three orders gets three badges without three requests. Counts only the other party’s unread messages, and skips closed orders whose chat can no longer be opened.\n\nDeclared before `GET /orders/{id}`, which would otherwise match `unread` as an order id.',
+  })
+  @ApiOkEnvelope({
+    counts: { '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33': 2 },
+    total: 2,
+  })
+  @ApiUnauthorized()
+  async unread(@CurrentUser() user: JwtUser) {
+    try {
+      return this.response.handle(await this.ordersService.unreadCounts(user));
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get one trip', description: 'Only a participant or an admin may read a trip.' })
   @ApiParam(ORDER_ID_PARAM)
@@ -245,6 +264,29 @@ export class OrdersController {
     try {
       const result = await this.ordersService.getMessages(id, user);
       return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post(':id/messages/read')
+  @ApiOperation({
+    summary: 'Mark the other party’s messages as read',
+    description:
+      'Call this when the chat is actually on screen, not when it is polled — a background refresh is not somebody reading, and marking there would clear a badge for messages nobody saw.\n\nIdempotent: only messages still unread are touched, so a re-open never moves an existing timestamp. When something does change, the sender is told over the socket.',
+  })
+  @ApiParam(ORDER_ID_PARAM)
+  @ApiOkEnvelope({
+    orderId: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33',
+    read: 2,
+    readAt: '2026-08-22T11:04:12.880Z',
+  })
+  @ApiUnauthorized()
+  @ApiForbidden('You are not a participant in this trip')
+  @ApiNotFound('Order not found')
+  async markMessagesRead(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    try {
+      return this.response.handle(await this.ordersService.markMessagesRead(id, user));
     } catch (e) {
       return this.response.exception(e);
     }

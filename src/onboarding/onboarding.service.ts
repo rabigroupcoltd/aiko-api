@@ -9,8 +9,10 @@ import {
   UserRole,
 } from '@prisma/client';
 import { ResponsesService } from '../common/responses/responses.service';
-import { ServiceResult, notFound, ok } from '../common/responses/response.types';
+import { ServiceResult, badRequest, notFound, ok } from '../common/responses/response.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
+import { UploadFile } from '../storage/storage.types';
 import { UpdateOnboardingDto } from './dto/onboarding.dto';
 
 /** The screens every account walks, whichever type they pick. */
@@ -99,6 +101,7 @@ export class OnboardingService {
   constructor(
     private prisma: PrismaService,
     private response: ResponsesService,
+    private storage: StorageService,
   ) {}
 
   /**
@@ -122,7 +125,6 @@ export class OnboardingService {
     if (user.onboardingCompletedAt) return true;
 
     return (
-      Boolean(user.phone) &&
       this.hasProfile(user) &&
       Boolean(user.profilePhotoUrl) &&
       Boolean(user.livenessPassedAt) &&
@@ -146,7 +148,11 @@ export class OnboardingService {
     // re-run, because approval can be withdrawn after the fact — an admin who
     // revokes a KYC must put that rider back in front of the waiting screen.
     if (!user.onboardingCompletedAt) {
-      if (!user.phone) return OnboardingStep.PHONE;
+      // PHONE is not resolved to on its own — Google sign-in is the only way
+      // in for now, and it gives no number, so the profile screen collects
+      // phone alongside name/email/dob instead of a separate screen for it.
+      // The PHONE step stays in the enum for when a real phone-first sign-in
+      // returns.
       if (!this.hasProfile(user)) return OnboardingStep.PROFILE;
       if (!user.profilePhotoUrl) return OnboardingStep.PHOTO;
       if (!user.livenessPassedAt) return OnboardingStep.LIVENESS;
@@ -171,7 +177,7 @@ export class OnboardingService {
   }
 
   private hasProfile(user: User): boolean {
-    return Boolean(user.firstName && user.lastName && user.email && user.dob);
+    return Boolean(user.firstName && user.lastName && user.email && user.dob && user.phone);
   }
 
   private driverStatus(user: UserWithDriver): DriverApprovalStatus {
@@ -224,6 +230,28 @@ export class OnboardingService {
         adminApproval: !isRider || status === 'APPROVED',
       },
     };
+  }
+
+  /**
+   * The PHOTO step's upload half.
+   *
+   * Separate from `update` because that one only ever writes fields it is
+   * handed — this is the one call site that has to put bytes in object storage
+   * first and turn them into the url/key `update` expects.
+   */
+  async uploadPhoto(userId: string, file?: UploadFile): Promise<ServiceResult> {
+    try {
+      if (!file) return badRequest('A photo is required');
+
+      const uploaded = await this.storage.upload(file, { folder: `profiles/${userId}` });
+
+      return this.update(userId, {
+        profilePhotoUrl: uploaded.url,
+        profilePhotoKey: uploaded.key,
+      });
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
   }
 
   async getState(userId: string): Promise<ServiceResult> {

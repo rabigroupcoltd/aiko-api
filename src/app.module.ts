@@ -20,6 +20,7 @@ import { QueuesModule } from './queues/queues.module';
 import { WorkersModule } from './queues/workers.module';
 import { RedisModule } from './redis/redis.module';
 import { RideModule } from './ride/ride.module';
+import { PlatformSettingsModule } from './settings/platform-settings.module';
 import { StorageModule } from './storage/storage.module';
 import { UsersModule } from './users/users.module';
 import { WalletModule } from './wallet/wallet.module';
@@ -36,6 +37,7 @@ import { WalletModule } from './wallet/wallet.module';
     RideEventsModule,
     QueuesModule,
     FirebaseModule,
+    PlatformSettingsModule,
     // After FirebaseModule — it sends through the same credentials.
     NotificationsModule,
 

@@ -11,6 +11,10 @@ enum UserRole {
   USER
   RIDER
   ADMIN
+  /// Works support tickets and looks up orders/drivers/users. Deliberately
+  /// excluded from pricing, settings, wallets and KYC approval — see
+  /// RolesGuard usages tagged @Roles('ADMIN', 'SUPPORT') for the exact boundary.
+  SUPPORT
 }
 
 /// How the account was established. Firebase accounts never have a password;
@@ -183,6 +187,12 @@ model User {
   photoUrl String?
 
   roles UserRole[]
+
+  /// Blocked accounts are rejected at sign-in and on every subsequent request
+  /// — see JwtStrategy — not just prevented from getting a fresh token. Orders
+  /// already in flight are left alone; only new activity by this account stops.
+  isBlocked     Boolean @default(false)
+  blockedReason String?
 
   // ------------------------------------------------------------- onboarding
   accountType           AccountType?

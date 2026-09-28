@@ -80,6 +80,13 @@ export const INFO_CODES = {
   ORDER_NO_DRIVER: 'ORDER_NO_DRIVER',
   /** A chat message on a trip. */
   MESSAGE: 'MESSAGE',
+  /**
+   * The other party opened the chat and your messages are now read.
+   *
+   * Raised only when something actually changed, so a chat screen sitting open
+   * and polling does not emit a receipt every twenty seconds.
+   */
+  MESSAGE_READ: 'MESSAGE_READ',
   /** The assigned driver moved. This animates the marker. */
   DRIVER_LOCATION: 'DRIVER_LOCATION',
   /** An admin cleared or rejected this driver's documents. */

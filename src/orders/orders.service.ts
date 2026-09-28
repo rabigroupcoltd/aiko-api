@@ -270,8 +270,11 @@ export class OrdersService {
       if (query.userId) where.userId = query.userId;
       if (query.driverId) where.driverId = query.driverId;
 
-      // Non-admins only ever see their own trips, whichever side they are on.
-      if (!user.roles?.includes('ADMIN')) {
+      // Non-staff only ever see their own trips, whichever side they are on.
+      // Support looks up orders on the same footing as admin — that is the
+      // job — but never gets the driver-only-transition or free-cancellation
+      // overrides further down, which stay admin-only.
+      if (!isStaffViewer(user)) {
         const driver = await this.prisma.driver.findUnique({ where: { userId: user.sub } });
         where.OR = driver ? [{ userId: user.sub }, { driverId: driver.id }] : [{ userId: user.sub }];
       }
@@ -674,6 +677,98 @@ export class OrdersService {
     }
   }
 
+  /**
+   * Mark the other side's messages as read.
+   *
+   * A separate call rather than a side effect of `getMessages`, because the two
+   * answer different questions. The chat screen polls every twenty seconds as a
+   * backstop for a dropped socket, and a poll running in a backgrounded app is
+   * not somebody reading — marking on read would clear the badge for messages
+   * nobody has seen.
+   *
+   * Only the *other* party's messages are touched: your own are read by
+   * definition, and including them would let a sender clear their own receipt.
+   */
+  async markMessagesRead(orderId: string, user: JwtUser): Promise<ServiceResult> {
+    try {
+      const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+      if (!order) return notFound('Order not found');
+
+      const allowed = await this.assertParticipant(order, user);
+      if (allowed.error) return allowed;
+
+      const readAt = new Date();
+      const { count } = await this.prisma.rideMessage.updateMany({
+        // `readAt: null` keeps this idempotent — re-reading an open chat writes
+        // nothing and, more importantly, does not move the timestamp on a
+        // message that was already read.
+        where: { orderId, senderId: { not: user.sub }, readAt: null },
+        data: { readAt },
+      });
+
+      // Tell the other party their messages landed. Only when something
+      // actually changed, so an idle chat screen does not emit on every poll.
+      if (count > 0) {
+        this.events.emit('order.messages-read', {
+          orderId,
+          readerId: user.sub,
+          readAt,
+          count,
+        });
+      }
+
+      return ok({ orderId, read: count, readAt });
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
+  /**
+   * Unread message counts, keyed by order.
+   *
+   * One query for every chat the caller is party to, rather than one per order:
+   * a driver holding three orders needs three badges on one screen, and asking
+   * per order would be three round trips for a number that decorates a button.
+   *
+   * Closed orders are excluded. Their chat is closed too, so an unread message
+   * on a delivered order is a badge that can never be cleared by opening it.
+   */
+  async unreadCounts(user: JwtUser): Promise<ServiceResult> {
+    try {
+      // The caller is a passenger by user id and a driver by driver id, and may
+      // legitimately be both on different orders.
+      const driver = await this.prisma.driver.findUnique({
+        where: { userId: user.sub },
+        select: { id: true },
+      });
+
+      const rows = await this.prisma.rideMessage.groupBy({
+        by: ['orderId'],
+        where: {
+          readAt: null,
+          senderId: { not: user.sub },
+          order: {
+            status: { notIn: CLOSED_STATUSES },
+            OR: [
+              { userId: user.sub },
+              ...(driver ? [{ driverId: driver.id }] : []),
+            ],
+          },
+        },
+        _count: { _all: true },
+      });
+
+      const counts = Object.fromEntries(rows.map((row) => [row.orderId, row._count._all]));
+
+      return ok({
+        counts,
+        total: rows.reduce((sum, row) => sum + row._count._all, 0),
+      });
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
   // --------------------------------------------------------------- ratings
 
   /** Rates the other party; a driver's aggregate is recomputed as a running mean. */
@@ -730,7 +825,7 @@ export class OrdersService {
   // ----------------------------------------------------------------- guards
 
   private async assertParticipant(order: Order, user: JwtUser): Promise<ServiceResult> {
-    if (user.roles?.includes('ADMIN')) return ok(true);
+    if (isStaffViewer(user)) return ok(true);
     if (order.userId === user.sub) return ok(true);
 
     if (order.driverId) {
@@ -747,4 +842,14 @@ export class OrdersService {
     const driver = await this.prisma.driver.findUnique({ where: { id: order.driverId } });
     return driver?.userId === user.sub;
   }
+}
+
+/**
+ * Admin and support both see every order — that is the "look up orders" half
+ * of support's job. Kept separate from the ADMIN-only checks elsewhere in
+ * this file (the driver-only-transition override, free cancellation): those
+ * carry money or delivery-state consequences support is not meant to touch.
+ */
+function isStaffViewer(user: JwtUser): boolean {
+  return Boolean(user.roles?.includes('ADMIN') || user.roles?.includes('SUPPORT'));
 }

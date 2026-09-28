@@ -1,9 +1,13 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
-import { CurrentUser } from '../common/current-user.decorator';
+import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { ResponsesService } from '../common/responses/responses.service';
+import { Roles } from '../common/roles.decorator';
+import { RolesGuard } from '../common/roles.guard';
 import {
+  ApiAdminErrors,
+  ApiConflict,
   ApiForbidden,
   ApiNotFound,
   ApiOkEnvelope,
@@ -11,7 +15,7 @@ import {
   ApiValidationError,
 } from '../common/swagger/api-envelope.decorator';
 import { USER_EXAMPLE } from '../common/swagger/examples';
-import { UpdateUserDto } from './dto/user.dto';
+import { BlockUserDto, CreateStaffDto, UpdateUserDto } from './dto/user.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('Users')
@@ -25,16 +29,41 @@ export class UsersController {
   ) {}
 
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPPORT')
   @ApiOperation({
     summary: 'List users',
-    description: 'Public user columns only — the password hash is never selected.',
+    description:
+      'Admin/support only — this is the whole user base, not one profile. Public user columns only, the password hash is never selected.',
   })
   @ApiOkEnvelope([USER_EXAMPLE])
   @ApiUnauthorized()
+  @ApiForbidden('Requires one of the following roles: ADMIN, SUPPORT')
   async findAll() {
     try {
       const result = await this.usersService.findAll();
       return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('staff')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Create a staff account',
+    description:
+      "Admin only. The dashboard's own way to add another admin or support account, without touching the seed script or the database by hand. Password-authenticated, same as the seeded admin — the new account never walks the app's onboarding stack.",
+  })
+  @ApiOkEnvelope({ ...USER_EXAMPLE, roles: ['SUPPORT', 'USER'] }, { message: 'Staff account created' })
+  @ApiValidationError('password must be longer than or equal to 8 characters')
+  @ApiConflict('A user with this email already exists')
+  @ApiAdminErrors()
+  async createStaff(@Body() dto: CreateStaffDto, @CurrentUser() actor: JwtUser) {
+    try {
+      const result = await this.usersService.createStaff(dto, actor);
+      return this.response.handle(result, { message: 'Staff account created' });
     } catch (e) {
       return this.response.exception(e);
     }
@@ -74,6 +103,31 @@ export class UsersController {
     try {
       const result = await this.usersService.update(id, dto, currentUserId);
       return this.response.handle(result, { message: 'Profile updated' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Patch(':id/block')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Block or unblock an account',
+    description:
+      'Admin only. A blocked account is rejected on its very next request — see JwtStrategy — not just at its next sign-in. Anything already in flight (an open order, an active trip) is left alone; only new activity by this account stops.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', example: USER_EXAMPLE.id })
+  @ApiOkEnvelope({ ...USER_EXAMPLE, isBlocked: true }, { message: 'Account updated' })
+  @ApiNotFound('User not found')
+  @ApiAdminErrors()
+  async block(
+    @Param('id') id: string,
+    @Body() dto: BlockUserDto,
+    @CurrentUser() actor: JwtUser,
+  ) {
+    try {
+      const result = await this.usersService.block(id, dto, actor);
+      return this.response.handle(result, { message: 'Account updated' });
     } catch (e) {
       return this.response.exception(e);
     }

@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PricingRule, VehicleType } from '@prisma/client';
-import { estimateRoadDistanceKm, round2 } from '../common/geo.util';
+import { round2 } from '../common/geo.util';
 import { SUPPORTED_VEHICLE_TYPES, isSupportedVehicleType } from '../common/vehicle-types';
 import { ResponsesService } from '../common/responses/responses.service';
 import {
@@ -10,8 +10,10 @@ import {
   ok,
 } from '../common/responses/response.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { PlatformSettingsService } from '../settings/platform-settings.service';
+import { DistanceService } from './distance.service';
 import { FareEstimateDto, UpdatePricingRuleDto, UpsertPricingRuleDto } from './dto/pricing.dto';
-import { DEFAULT_PRICING, FARE_ROUNDING_STEP } from './pricing.constants';
+import { DEFAULT_PRICING } from './pricing.constants';
 
 export interface FareQuote {
   vehicleType: VehicleType;
@@ -38,6 +40,8 @@ export class PricingService implements OnModuleInit {
   constructor(
     private prisma: PrismaService,
     private response: ResponsesService,
+    private distance: DistanceService,
+    private settings: PlatformSettingsService,
   ) {}
 
   async onModuleInit() {
@@ -49,19 +53,7 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-  /**
-   * Brings the rate cards in line with what Aiko currently dispatches.
-   *
-   * Two halves. Supported types that have no row get one, so a fresh database
-   * can quote before an admin opens the pricing screen. Unsupported types that
-   * *do* have a row — left over from when this was a ride-hailing app — are
-   * deactivated rather than deleted: `estimateAll` only returns active rules,
-   * so that is what takes cars and trucks out of the passenger's picker, and
-   * keeping the row means the old rate card is still there if the scope changes
-   * back.
-   *
-   * Existing supported rows are never overwritten. An admin's pricing is theirs.
-   */
+
   async ensureDefaults() {
     const existing = await this.prisma.pricingRule.findMany({
       select: { vehicleType: true, isActive: true },
@@ -138,15 +130,10 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-  /**
-   * Rule used for money decisions — inactive types cannot be booked. Returns a
-   * ServiceResult so callers propagate the right status rather than a 500.
-   */
+
   async getActiveRule(vehicleType: VehicleType): Promise<ServiceResult<PricingRule | string>> {
     try {
-      // Checked before the read so the message names the real reason. "Aiko
-      // does not carry cars" is actionable; "pricing is not configured" reads
-      // like an outage the caller should retry.
+
       if (!isSupportedVehicleType(vehicleType)) {
         return badRequest(`Aiko only dispatches ${SUPPORTED_VEHICLE_TYPES.join(' and ')} right now`);
       }
@@ -167,11 +154,9 @@ export class PricingService implements OnModuleInit {
       const ruleResult = await this.getActiveRule(dto.vehicleType as VehicleType);
       if (ruleResult.error) return ruleResult as ServiceResult<string>;
 
-      const distanceKm = estimateRoadDistanceKm(
-        dto.pickupLat,
-        dto.pickupLng,
-        dto.dropoffLat,
-        dto.dropoffLng,
+      const { distanceKm } = await this.distance.roadDistanceKm(
+        { lat: dto.pickupLat, lng: dto.pickupLng },
+        { lat: dto.dropoffLat, lng: dto.dropoffLng },
       );
 
       return ok(this.quoteFromRule(ruleResult.body as PricingRule, distanceKm));
@@ -184,11 +169,9 @@ export class PricingService implements OnModuleInit {
   async estimateAll(dto: Omit<FareEstimateDto, 'vehicleType'>): Promise<ServiceResult> {
     try {
       const rules = await this.prisma.pricingRule.findMany({ where: { isActive: true } });
-      const distanceKm = estimateRoadDistanceKm(
-        dto.pickupLat,
-        dto.pickupLng,
-        dto.dropoffLat,
-        dto.dropoffLng,
+      const { distanceKm } = await this.distance.roadDistanceKm(
+        { lat: dto.pickupLat, lng: dto.pickupLng },
+        { lat: dto.dropoffLat, lng: dto.dropoffLng },
       );
 
       return ok(rules.map((rule) => this.quoteFromRule(rule, distanceKm)));
@@ -208,7 +191,8 @@ export class PricingService implements OnModuleInit {
     const minimumFareApplied = raw < rule.minimumFare;
     const subtotal = Math.max(raw, rule.minimumFare);
 
-    const fare = roundUpTo(subtotal * rule.surgeMultiplier + rule.bookingFee, FARE_ROUNDING_STEP);
+    const roundingStep = this.settings.getNumber('FARE_ROUNDING_STEP');
+    const fare = roundUpTo(subtotal * rule.surgeMultiplier + rule.bookingFee, roundingStep);
     const platformFee = Math.round((fare * rule.platformFeePercent) / 100);
 
     return {

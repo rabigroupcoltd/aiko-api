@@ -6,7 +6,6 @@ import { ResponsesService } from '../common/responses/responses.service';
 import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
 import {
-  ApiAdminErrors,
   ApiCreatedEnvelope,
   ApiForbidden,
   ApiNotFound,
@@ -93,14 +92,15 @@ export class SupportController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'SUPPORT')
   @ApiOperation({
     summary: 'The support queue',
     description:
       'Urgent first, then most recently active. Returns `counts` per status alongside the page so the tabs above the table need no second request.',
   })
   @ApiOkEnvelope(SUPPORT_TICKET_PAGE_EXAMPLE)
-  @ApiAdminErrors()
+  @ApiUnauthorized()
+  @ApiForbidden('Requires one of the following roles: ADMIN, SUPPORT')
   async list(@Query() query: SupportQueryDto) {
     try {
       return this.response.handle(await this.support.list(query));
@@ -158,15 +158,16 @@ export class SupportController {
 
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'SUPPORT')
   @ApiOperation({
     summary: 'Assign, reprioritise or close',
     description:
-      'Admin only. Send `assigneeId: null` to put a ticket back in the unassigned pile. Every change is written to the audit trail.',
+      'Admin/support. Send `assigneeId: null` to put a ticket back in the unassigned pile. Every change is written to the audit trail.',
   })
   @ApiParam(TICKET_ID_PARAM)
   @ApiOkEnvelope({ ...SUPPORT_TICKET_EXAMPLE, status: 'RESOLVED' }, { message: 'Ticket updated' })
-  @ApiAdminErrors()
+  @ApiUnauthorized()
+  @ApiForbidden('Requires one of the following roles: ADMIN, SUPPORT')
   @ApiNotFound('Ticket not found')
   async update(
     @Param('id') id: string,

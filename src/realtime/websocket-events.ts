@@ -179,6 +179,24 @@ export const TRIP_NOTIFICATIONS: NotificationDoc[] = [
     action: 'Append to the thread.',
   },
   {
+    code: INFO_CODES.MESSAGE_READ,
+    summary:
+      'The other party opened the chat, so everything you sent before now is read. Raised only when something actually changed — an open chat screen polling in the background emits nothing.',
+    audience: '`ride:<orderId>` — both parties, so compare `readerId` to ignore your own',
+    payload: '`{ orderId, readerId, readAt, count }`',
+    action: 'Mark your own sent messages as read, and clear the unread badge for that order.',
+    example: {
+      code: 'MESSAGE_READ',
+      message: 'Messages read',
+      data: {
+        orderId: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33',
+        readerId: '3f2a7c1e-9b64-4d2a-8f31-1c0d5e6a7b81',
+        readAt: '2026-08-22T11:04:12.880Z',
+        count: 2,
+      },
+    },
+  },
+  {
     code: INFO_CODES.KYC_UPDATED,
     summary: 'An admin cleared or rejected this driver’s documents.',
     audience: '`user:<driverUserId>`',

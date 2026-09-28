@@ -52,6 +52,8 @@ export class AuthService {
       const { identity } = verified;
       const existing = await this.findByIdentity(identity);
 
+      if (existing?.isBlocked) return unauthorized('This account has been blocked');
+
       const user = existing
         ? await this.linkExisting(existing, identity)
         : await this.createFromIdentity(identity);
@@ -174,6 +176,12 @@ export class AuthService {
 
       const isPasswordValid = await bcrypt.compare(dto.password, user.password);
       if (!isPasswordValid) return unauthorized('Invalid credentials');
+
+      // Checked after the password, not before: the caller has already
+      // proven they own these credentials, so naming the real reason here
+      // does not hand an attacker anything the enumeration guard above
+      // protects against.
+      if (user.isBlocked) return unauthorized('This account has been blocked');
 
       await this.prisma.user.update({
         where: { id: user.id },

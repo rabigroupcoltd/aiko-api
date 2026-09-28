@@ -15,6 +15,8 @@ export const PUBLIC_USER_SELECT = {
   authProvider: true,
   emailVerified: true,
   phoneVerified: true,
+  isBlocked: true,
+  blockedReason: true,
   accountType: true,
   onboardingStep: true,
   onboardingCompletedAt: true,

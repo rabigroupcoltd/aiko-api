@@ -202,6 +202,18 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         .emit(SOCKET_EVENTS.INFO, info(INFO_CODES.DRIVER_LOCATION, 'Driver moved', payload));
     });
 
+    // Both parties are in the trip room, and the reader ignores its own receipt
+    // by comparing `readerId` — cheaper than excluding one socket server-side
+    // when a driver may have the same order open on two devices.
+    this.events.on<any>('order.messages-read').subscribe(({ payload }) => {
+      this.server
+        .to(rideRoom(payload.orderId))
+        .emit(
+          SOCKET_EVENTS.INFO,
+          info(INFO_CODES.MESSAGE_READ, 'Messages read', payload),
+        );
+    });
+
     this.events.on<any>('driver.kyc-updated').subscribe(({ payload }) => {
       if (!payload?.userId) return;
       this.toUser(

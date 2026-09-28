@@ -9,10 +9,12 @@ import {
 import {
   ALL_AVAILABLE_KEYS,
   ALL_GEO_KEYS,
+  DARK_FLAG_TTL_SECONDS,
   HEARTBEAT_TTL_SECONDS,
   HOT_GEO_KEYS,
   OFFERED_TTL_SECONDS,
   availableKey,
+  darkFlagKey,
   geoKey,
   heartbeatKey,
   metaKey,
@@ -228,6 +230,22 @@ export class RedisService {
 
   async isOnline(driverId: string): Promise<boolean> {
     return (await this.redis.exists(heartbeatKey(driverId))) === 1;
+  }
+
+  // ------------------------------------------------------- watchdog flag
+
+  /** Marks this driver's current disappearance as already alerted on. */
+  async flagDriverDark(driverId: string): Promise<void> {
+    await this.redis.set(darkFlagKey(driverId), '1', 'EX', DARK_FLAG_TTL_SECONDS);
+  }
+
+  async isDriverFlaggedDark(driverId: string): Promise<boolean> {
+    return (await this.redis.exists(darkFlagKey(driverId))) === 1;
+  }
+
+  /** A heartbeat arrived — whatever disappearance was flagged is over. */
+  async clearDriverDarkFlag(driverId: string): Promise<void> {
+    await this.redis.del(darkFlagKey(driverId));
   }
 
   async getAvailableDriverIds(vehicleType?: VehicleType): Promise<string[]> {

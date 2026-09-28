@@ -3,11 +3,14 @@ export const QUEUE_RIDE_MATCHING = 'ride-matching';
 export const QUEUE_RIDE_TIMEOUT = 'ride-timeout';
 /** Widens the ring around a marketplace order nobody has claimed. */
 export const QUEUE_ORDER_DISPATCH = 'order-dispatch';
+/** Watches drivers who are mid-trip for a heartbeat that stopped arriving. */
+export const QUEUE_DRIVER_WATCHDOG = 'driver-watchdog';
 
 export const JOB_FLUSH_LOCATIONS = 'process-driver-location';
 export const JOB_FIND_NEARBY_DRIVERS = 'find-nearby-drivers';
 export const JOB_CANCEL_UNACCEPTED = 'cancel-unaccepted-order';
 export const JOB_EXPAND_ORDER_SEARCH = 'expand-order-search';
+export const JOB_CHECK_DRIVER_WATCHDOG = 'check-driver-watchdog';
 
 /**
  * How often Redis positions are batched into Postgres.
@@ -25,6 +28,19 @@ export const JOB_EXPAND_ORDER_SEARCH = 'expand-order-search';
  */
 export const LOCATION_FLUSH_INTERVAL_MS = Number(
   process.env.LOCATION_FLUSH_INTERVAL_MS || 120_000,
+);
+
+/**
+ * How often the mid-trip watchdog scans for a driver who has gone silent.
+ *
+ * Detection latency is this plus however much of HEARTBEAT_TTL_SECONDS (90s)
+ * was left when the driver actually went dark — worst case just under two
+ * minutes. Tighter than that buys earlier rider reassurance at the cost of
+ * scanning every driver with an active order that much more often; thirty
+ * seconds is cheap against how rarely this table has rows at all.
+ */
+export const DRIVER_WATCHDOG_INTERVAL_MS = Number(
+  process.env.DRIVER_WATCHDOG_INTERVAL_MS || 30_000,
 );
 
 /** Retry a widened driver search this many times before giving up on a request. */

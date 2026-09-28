@@ -177,7 +177,7 @@ export class SupportService {
    */
   async detail(id: string, user: JwtUser): Promise<ServiceResult> {
     try {
-      const isAdmin = Boolean(user.roles?.includes('ADMIN'));
+      const isStaff = Boolean(user.roles?.some((role) => role === 'ADMIN' || role === 'SUPPORT'));
 
       const ticket = await this.prisma.supportTicket.findUnique({
         where: { id },
@@ -196,7 +196,7 @@ export class SupportService {
             },
           },
           messages: {
-            where: isAdmin ? {} : { internal: false },
+            where: isStaff ? {} : { internal: false },
             include: { sender: { select: PUBLIC_USER_SELECT } },
             orderBy: { createdAt: 'asc' },
           },
@@ -204,7 +204,7 @@ export class SupportService {
       });
 
       if (!ticket) return notFound('Ticket not found');
-      if (!isAdmin && ticket.requesterId !== user.sub) return forbidden('That ticket is not yours');
+      if (!isStaff && ticket.requesterId !== user.sub) return forbidden('That ticket is not yours');
 
       return ok(ticket);
     } catch (e) {
@@ -215,7 +215,7 @@ export class SupportService {
   /** Post a message. Either party; `internal` is refused for non-staff. */
   async reply(id: string, user: JwtUser, dto: ReplyTicketDto): Promise<ServiceResult> {
     try {
-      const isAdmin = Boolean(user.roles?.includes('ADMIN'));
+      const isStaff = Boolean(user.roles?.some((role) => role === 'ADMIN' || role === 'SUPPORT'));
 
       const ticket = await this.prisma.supportTicket.findUnique({
         where: { id },
@@ -223,15 +223,15 @@ export class SupportService {
       });
 
       if (!ticket) return notFound('Ticket not found');
-      if (!isAdmin && ticket.requesterId !== user.sub) return forbidden('That ticket is not yours');
-      if (dto.internal && !isAdmin) return forbidden('Only staff can leave internal notes');
+      if (!isStaff && ticket.requesterId !== user.sub) return forbidden('That ticket is not yours');
+      if (dto.internal && !isStaff) return forbidden('Only staff can leave internal notes');
 
       const [message] = await this.prisma.$transaction([
         this.prisma.supportMessage.create({
           data: {
             ticketId: id,
             senderId: user.sub,
-            fromStaff: isAdmin,
+            fromStaff: isStaff,
             internal: Boolean(dto.internal),
             body: dto.body,
           },
@@ -244,11 +244,11 @@ export class SupportService {
             // A customer replying to something marked resolved is reopening it.
             // An internal note is not: staff talking among themselves should not
             // drag a closed ticket back into the queue.
-            ...(!isAdmin && !dto.internal && ticket.status === SupportStatus.RESOLVED
+            ...(!isStaff && !dto.internal && ticket.status === SupportStatus.RESOLVED
               ? { status: SupportStatus.OPEN, resolvedAt: null }
               : {}),
             // Staff replying moves it out of OPEN — the ball is with the customer.
-            ...(isAdmin && !dto.internal && ticket.status === SupportStatus.OPEN
+            ...(isStaff && !dto.internal && ticket.status === SupportStatus.OPEN
               ? { status: SupportStatus.PENDING }
               : {}),
           },

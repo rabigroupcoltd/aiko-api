@@ -7,6 +7,8 @@ export type RideEventName =
   | 'order.status-changed'
   | 'order.cancelled'
   | 'order.message'
+  /** The other party opened the chat; their unread messages are now read. */
+  | 'order.messages-read'
   | 'order.rated'
   /** A marketplace order is open and should appear in these drivers' grids. */
   | 'order.available'
@@ -34,7 +36,9 @@ export type RideEventName =
    */
   | 'driver.location'
   /** An admin cleared or rejected a driver's documents. */
-  | 'driver.kyc-updated';
+  | 'driver.kyc-updated'
+  /** The watchdog found a driver silent while holding active orders. */
+  | 'driver.went-dark';
 
 export interface RideEvent<T = any> {
   name: RideEventName;

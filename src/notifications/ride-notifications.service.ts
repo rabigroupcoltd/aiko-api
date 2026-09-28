@@ -47,6 +47,7 @@ export class RideNotificationsService implements OnModuleInit {
     this.subscribe('order.picked-up', (payload) => this.onOrderPickedUp(payload));
     this.subscribe('order.delivered', (payload) => this.onOrderDelivered(payload));
     this.subscribe('order.no-driver-found', (payload) => this.onNoDriverFound(payload));
+    this.subscribe('driver.went-dark', (payload) => this.onDriverWentDark(payload));
 
     // The losing half of fastest-finger. Both paths clear the card for every
     // driver who was offered the order but did not get it.
@@ -231,6 +232,62 @@ export class RideNotificationsService implements OnModuleInit {
         data: { dedupeKey: `order-delivered-driver:${order.id}`, orderId: order.id },
       });
     }
+  }
+
+  /**
+   * The watchdog flagged this driver as gone dark while holding these orders.
+   *
+   * Alert-only for now — no order is touched here. Each rider whose delivery
+   * this driver is carrying is told there's a problem; ops sees the same news
+   * so a human can decide whether to reassign or wait it out. Fired once per
+   * disappearance by DriverWatchdogWorker, not once per watchdog tick.
+   */
+  private async onDriverWentDark(payload: {
+    driverId: string;
+    orders: { id: string; userId: string; pickupLocation: string; dropoffLocation: string }[];
+  }) {
+    const { driverId, orders } = payload ?? {};
+    if (!orders?.length) return;
+
+    await Promise.all(
+      orders.map((order) =>
+        this.push.sendToUsers([order.userId], {
+          type: PUSH_TYPES.DRIVER_UNREACHABLE,
+          title: 'Trouble reaching your driver',
+          body: `We're having trouble reaching your driver for the trip to ${order.dropoffLocation}. We're on it.`,
+          collapseKey: `order:${order.id}:driver-unreachable`,
+          ttlSeconds: TRIP_TTL_SECONDS,
+          data: { dedupeKey: `driver-unreachable:${order.id}`, orderId: order.id },
+        }),
+      ),
+    );
+
+    await this.alertOpsOfDarkDriver(driverId, orders);
+  }
+
+  private async alertOpsOfDarkDriver(
+    driverId: string,
+    orders: { id: string }[],
+  ): Promise<void> {
+    const admins = await this.prisma.user.findMany({
+      where: { roles: { has: 'ADMIN' } },
+      select: { id: true },
+    });
+    if (admins.length === 0) return;
+
+    await this.push.sendToUsers(
+      admins.map((admin) => admin.id),
+      {
+        type: PUSH_TYPES.DRIVER_UNREACHABLE,
+        title: 'Driver went dark mid-trip',
+        body: `A driver stopped reporting location while holding ${orders.length} active order(s). Check the dispatch board.`,
+        data: {
+          dedupeKey: `driver-unreachable-ops:${driverId}`,
+          driverId,
+          orderIds: orders.map((order) => order.id).join(','),
+        },
+      },
+    );
   }
 
   private async onNoDriverFound(order: any) {

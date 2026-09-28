@@ -1,6 +1,8 @@
-import { PrismaClient, VehicleType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { SUPPORTED_VEHICLE_TYPES } from '../src/common/vehicle-types';
 import { DEFAULT_PRICING } from '../src/pricing/pricing.constants';
+import { PLATFORM_SETTINGS } from '../src/settings/platform-settings.constants';
 import {
   MINNA_LANDMARKS,
   landmarkAddress,
@@ -12,7 +14,8 @@ const prisma = new PrismaClient();
 
 /**
  * Idempotent: safe to re-run. Creates the first admin (the API refuses to make
- * one through public registration), the per-vehicle pricing rules, and the
+ * one through public registration), the per-vehicle pricing rules, the global
+ * pricing settings (fare rounding, the road-distance fallback factor), and the
  * Minna gazetteer that address search falls back on.
  */
 async function main() {
@@ -41,16 +44,43 @@ async function main() {
   });
   console.log(`Admin ready: ${admin.email}`);
 
-  for (const vehicleType of Object.values(VehicleType)) {
+  // Only the types Aiko actually dispatches — a pre-existing loop over the
+  // full VehicleType enum would have upserted CAR/TRUCK/BICYCLE rows too,
+  // defaulting to isActive: true and 0 for every fare column, since every
+  // column on PricingRule has a Prisma default. PricingService.ensureDefaults
+  // deactivates those on the app's first boot, but there's no reason to seed
+  // a live $0 car fare even for the few seconds until that runs.
+  for (const vehicleType of SUPPORTED_VEHICLE_TYPES) {
     await prisma.pricingRule.upsert({
       where: { vehicleType },
       create: { vehicleType, ...DEFAULT_PRICING[vehicleType] },
       update: {},
     });
   }
-  console.log(`Pricing rules ready for: ${Object.values(VehicleType).join(', ')}`);
+  console.log(`Pricing rules ready for: ${SUPPORTED_VEHICLE_TYPES.join(', ')}`);
 
+  await seedPlatformSettings();
   await seedMinnaLandmarks();
+}
+
+/**
+ * The global numeric knobs pricing reads through PlatformSettingsService —
+ * FARE_ROUNDING_STEP, ROAD_DISTANCE_FACTOR. Each `default` already resolves
+ * the matching env var if one is set, so this seeds whatever this deployment
+ * would otherwise have gotten from the env, but as an editable row.
+ *
+ * `update: {}` — never overwrites a value an admin already changed through
+ * `PATCH /api/settings`. Re-running this seed must not undo that.
+ */
+async function seedPlatformSettings() {
+  for (const [key, definition] of Object.entries(PLATFORM_SETTINGS)) {
+    await prisma.platformSetting.upsert({
+      where: { key },
+      create: { key, value: String(definition.default), description: definition.description },
+      update: {},
+    });
+  }
+  console.log(`Platform settings ready: ${Object.keys(PLATFORM_SETTINGS).join(', ')}`);
 }
 
 /**

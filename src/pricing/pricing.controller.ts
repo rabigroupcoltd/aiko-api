@@ -69,7 +69,7 @@ export class PricingController {
   @ApiOperation({
     summary: 'Quote one vehicle type',
     description:
-      'Straight-line distance multiplied by ROAD_DISTANCE_FACTOR, priced against the active rule, then rounded up to FARE_ROUNDING_STEP. `breakdown` is the object frozen into `Order.pricingSnapshot` when the trip is booked.',
+      "Real road distance from Google's Distance Matrix API (falling back to straight-line distance × the admin-editable ROAD_DISTANCE_FACTOR setting if Google is unreachable — see GET/PATCH /settings), priced against the active rule, then rounded up to the FARE_ROUNDING_STEP setting. `breakdown` is the object frozen into `Order.pricingSnapshot` when the trip is booked.",
   })
   @ApiOkEnvelope(FARE_QUOTE_EXAMPLE)
   @ApiValidationError('TRICYCLE is not available for booking')

@@ -46,6 +46,8 @@ export const PUSH_TYPES = {
   ORDER_DELIVERED: 'ORDER_DELIVERED',
   /** The search widened as far as it could and found nobody. */
   ORDER_NO_DRIVER: 'ORDER_NO_DRIVER',
+  /** The assigned driver's location stopped arriving mid-trip. */
+  DRIVER_UNREACHABLE: 'DRIVER_UNREACHABLE',
 } as const;
 
 export type PushType = (typeof PUSH_TYPES)[keyof typeof PUSH_TYPES];
