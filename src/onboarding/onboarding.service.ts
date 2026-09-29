@@ -254,6 +254,11 @@ export class OnboardingService {
     }
   }
 
+  /** `buildState`, with the derived progress written back to the row. */
+  stateFor(user: UserWithDriver): Promise<OnboardingState> {
+    return this.syncProgress(user, this.buildState(user));
+  }
+
   async getState(userId: string): Promise<ServiceResult> {
     try {
       const user = await this.prisma.user.findUnique({
@@ -262,7 +267,7 @@ export class OnboardingService {
       });
 
       if (!user) return notFound('User not found');
-      return ok(this.buildState(user));
+      return ok(await this.stateFor(user));
     } catch (e) {
       return this.response.errorHandler(e);
     }
@@ -322,22 +327,44 @@ export class OnboardingService {
         include: { driver: { select: ONBOARDING_DRIVER_SELECT } },
       });
 
-      const state = this.buildState(updated);
-
-      // Stamp completion once, the first time the derived step reaches DONE.
-      if (state.completed && !updated.onboardingCompletedAt) {
-        const completedAt = new Date();
-        await this.prisma.user.update({
-          where: { id: userId },
-          data: { onboardingCompletedAt: completedAt, onboardingStep: OnboardingStep.DONE },
-        });
-        state.completedAt = completedAt.toISOString();
-        state.recordedStep = OnboardingStep.DONE;
-      }
-
-      return ok(state);
+      // An explicit breadcrumb from the client is kept as sent; otherwise the
+      // stored step follows the data.
+      return ok(await this.syncProgress(updated, this.buildState(updated), dto.step === undefined));
     } catch (e) {
       return this.response.errorHandler(e);
     }
+  }
+
+  /**
+   * Persists what `buildState` derived, so the stored row always says where the
+   * user is — not just the computed response.
+   *
+   * - Stamps `onboardingCompletedAt` the first time the derived step reaches
+   *   DONE, making completion sticky. This also covers accounts that finished
+   *   before the stamp existed: their first read seals them.
+   * - Moves the `onboardingStep` breadcrumb to the derived resume step.
+   */
+  private async syncProgress(
+    user: UserWithDriver,
+    state: OnboardingState,
+    followResume = true,
+  ): Promise<OnboardingState> {
+    if (this.isStaff(user)) return state;
+
+    const data: Prisma.UserUpdateInput = {};
+    if (state.completed && !user.onboardingCompletedAt) {
+      data.onboardingCompletedAt = new Date();
+    }
+    if ((followResume || state.completed) && user.onboardingStep !== state.resumeStep) {
+      data.onboardingStep = state.resumeStep;
+    }
+    if (Object.keys(data).length === 0) return state;
+
+    await this.prisma.user.update({ where: { id: user.id }, data });
+    if (data.onboardingCompletedAt) {
+      state.completedAt = (data.onboardingCompletedAt as Date).toISOString();
+    }
+    if (data.onboardingStep) state.recordedStep = state.resumeStep;
+    return state;
   }
 }

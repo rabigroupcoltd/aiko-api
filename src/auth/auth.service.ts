@@ -62,7 +62,7 @@ export class AuthService {
         isNewUser: !existing,
         accessToken: this.generateToken(user.id, user.email, user.roles),
         user: this.publicView(user),
-        onboarding: this.onboarding.buildState(user),
+        onboarding: await this.onboarding.stateFor(user),
       });
     } catch (e) {
       return this.response.errorHandler(e);
