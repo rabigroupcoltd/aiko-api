@@ -38,6 +38,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
         `${request.method} ${request.url} -> ${body.code}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
+    } else if (
+      request.method !== 'GET' &&
+      body.code !== HttpStatus.UNAUTHORIZED &&
+      body.code !== HttpStatus.NOT_FOUND
+    ) {
+      // A rejected write — a bad upload, a failed validation — is otherwise
+      // invisible server-side, and "I submitted but nothing happened" is then
+      // undiagnosable. Route and reason only, never the body.
+      this.logger.warn(
+        `${request.method} ${request.path} -> ${body.code}: ${JSON.stringify((body as any).message)}`,
+      );
     }
 
     response.status(body.code).json(body);

@@ -255,7 +255,9 @@ model Driver {
   userId             String      @unique
   vehicleType        VehicleType
   vehiclePlate       String
-  vehicleModel       String
+  /// The make, e.g. Bajaj, TVS, Honda.
+  vehicleBrand       String?
+  vehicleModel       String?
   vehicleColor       String?
   vehicleYear        Int?
   kycStatus          KycStatus   @default(PENDING)

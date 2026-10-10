@@ -48,6 +48,7 @@ const DIRECTORY_DRIVER_SELECT = {
   kycRejectionReason: true,
   vehicleType: true,
   vehiclePlate: true,
+  vehicleBrand: true,
   vehicleModel: true,
   isAvailable: true,
   isBlocked: true,

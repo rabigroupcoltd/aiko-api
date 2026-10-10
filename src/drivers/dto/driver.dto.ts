@@ -45,10 +45,21 @@ export class RegisterDriverDto {
   @MaxLength(20)
   vehiclePlate: string;
 
-  @ApiProperty({ example: 'Bajaj RE', maxLength: 100 })
+  @ApiPropertyOptional({
+    example: 'Bajaj',
+    maxLength: 60,
+    description: 'The make. At least one of vehicleBrand or vehicleModel is required.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  vehicleBrand?: string;
+
+  @ApiPropertyOptional({ example: 'RE', maxLength: 100 })
+  @IsOptional()
   @IsString()
   @MaxLength(100)
-  vehicleModel: string;
+  vehicleModel?: string;
 
   @ApiPropertyOptional({ example: 'Yellow', maxLength: 40 })
   @IsOptional()
@@ -94,6 +105,12 @@ export class UpdateDriverDto {
   @IsString()
   @MaxLength(20)
   vehiclePlate?: string;
+
+  @ApiPropertyOptional({ example: 'Bajaj', maxLength: 60 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  vehicleBrand?: string;
 
   @ApiPropertyOptional({ example: 'Bajaj RE', maxLength: 100 })
   @IsOptional()

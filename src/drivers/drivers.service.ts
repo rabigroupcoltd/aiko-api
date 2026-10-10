@@ -98,6 +98,10 @@ export class DriversService {
     let uploads: Awaited<ReturnType<StorageService['uploadMany']>> = [];
 
     try {
+      if (!dto.vehicleBrand?.trim() && !dto.vehicleModel?.trim()) {
+        return badRequest('Tell us the brand of your vehicle');
+      }
+
       const existing = await this.prisma.driver.findUnique({ where: { userId } });
       if (existing) {
         // A rejected rider re-shoots and sends again; anyone else is already
@@ -125,7 +129,8 @@ export class DriversService {
             userId,
             vehicleType: dto.vehicleType as VehicleType,
             vehiclePlate: plate,
-            vehicleModel: dto.vehicleModel,
+            vehicleBrand: dto.vehicleBrand?.trim() || null,
+            vehicleModel: dto.vehicleModel?.trim() || null,
             vehicleColor: dto.vehicleColor,
             vehicleYear: dto.vehicleYear,
             kycStatus: KycStatus.PENDING,
@@ -413,7 +418,8 @@ export class DriversService {
           data: {
             vehicleType: dto.vehicleType as VehicleType,
             vehiclePlate: plate,
-            vehicleModel: dto.vehicleModel,
+            vehicleBrand: dto.vehicleBrand?.trim() || null,
+            vehicleModel: dto.vehicleModel?.trim() || null,
             vehicleColor: dto.vehicleColor,
             vehicleYear: dto.vehicleYear,
             kycStatus: KycStatus.PENDING,
