@@ -22,10 +22,13 @@ export const VEHICLE_PHOTO_TYPES = [
   'SIDE',
   'INTERIOR',
   'PLATE_NUMBER',
+  'DRIVER_LICENSE',
+  'NATIONAL_ID',
   'OTHER',
 ] as const;
 
-const PHOTO_TYPE_LIST = /^(FRONT|BACK|SIDE|INTERIOR|PLATE_NUMBER|OTHER)(,(FRONT|BACK|SIDE|INTERIOR|PLATE_NUMBER|OTHER))*$/;
+const PHOTO_TYPE = VEHICLE_PHOTO_TYPES.join('|');
+const PHOTO_TYPE_LIST = new RegExp(`^(${PHOTO_TYPE})(,(${PHOTO_TYPE}))*$`);
 
 /**
  * Submitted as multipart/form-data alongside the vehicle photos, so every

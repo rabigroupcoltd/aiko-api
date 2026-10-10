@@ -99,7 +99,18 @@ export class DriversService {
 
     try {
       const existing = await this.prisma.driver.findUnique({ where: { userId } });
-      if (existing) return conflict('Driver profile already exists');
+      if (existing) {
+        // A rejected rider re-shoots and sends again; anyone else is already
+        // in the queue or approved.
+        if (existing.kycStatus === KycStatus.REJECTED) {
+          return this.resubmit(existing, dto, files);
+        }
+        return conflict(
+          existing.kycStatus === KycStatus.PENDING
+            ? 'Your documents are already with us and waiting for review'
+            : 'Driver profile already exists',
+        );
+      }
 
       const plate = dto.vehiclePlate.toUpperCase();
       const plateTaken = await this.prisma.driver.findFirst({ where: { vehiclePlate: plate } });
@@ -365,6 +376,91 @@ export class DriversService {
   }
 
   /** Best-effort cleanup of objects written before a failed database write. */
+  /**
+   * A rejected rider sending their documents again.
+   *
+   * The new set replaces the old one outright — the admin reviews what was
+   * just captured, not a mix of the rejected shots and the new ones — and the
+   * row goes back to PENDING, which is what puts it in the KYC queue again.
+   */
+  private async resubmit(
+    existing: Driver,
+    dto: RegisterDriverDto,
+    files: UploadFile[],
+  ): Promise<ServiceResult> {
+    let uploads: Awaited<ReturnType<StorageService['uploadMany']>> = [];
+
+    try {
+      const plate = dto.vehiclePlate.toUpperCase();
+      const plateTaken = await this.prisma.driver.findFirst({
+        where: { vehiclePlate: plate, id: { not: existing.id } },
+      });
+      if (plateTaken) return conflict('Vehicle plate is already registered');
+
+      uploads = await this.storage.uploadMany(files, { folder: `vehicles/${existing.userId}` });
+      const photoTypes = parsePhotoTypes(dto.photoTypes, files.length);
+
+      const previous = await this.prisma.vehiclePhoto.findMany({
+        where: { driverId: existing.id },
+        select: { key: true, provider: true },
+      });
+
+      const driver = await this.prisma.$transaction(async (tx) => {
+        await tx.vehiclePhoto.deleteMany({ where: { driverId: existing.id } });
+
+        const updated = await tx.driver.update({
+          where: { id: existing.id },
+          data: {
+            vehicleType: dto.vehicleType as VehicleType,
+            vehiclePlate: plate,
+            vehicleModel: dto.vehicleModel,
+            vehicleColor: dto.vehicleColor,
+            vehicleYear: dto.vehicleYear,
+            kycStatus: KycStatus.PENDING,
+            kycRejectionReason: null,
+            vehiclePhotos: {
+              create: uploads.map((upload, index) => ({
+                type: photoTypes[index],
+                url: upload.url,
+                key: upload.key,
+                provider: upload.provider,
+                mimeType: upload.mimeType,
+                sizeBytes: upload.sizeBytes,
+              })),
+            },
+          },
+          include: { user: { select: PUBLIC_USER_SELECT }, wallet: true, vehiclePhotos: true },
+        });
+
+        await tx.user.update({
+          where: { id: existing.userId },
+          data: { onboardingStep: OnboardingStep.AWAITING_APPROVAL },
+        });
+
+        return updated;
+      });
+
+      // Only once the new set is committed — losing an orphaned old object
+      // matters far less than losing the documents under review.
+      await this.discardUploads(previous).catch((e) =>
+        this.logger.warn(`Could not delete replaced KYC photos: ${e?.message}`),
+      );
+
+      await this.audit.record({
+        action: 'driver.kyc.resubmit',
+        entity: AuditEntity.DRIVER,
+        entityId: existing.id,
+        summary: `${driver.user?.name ?? 'A driver'} resubmitted their documents`,
+        metadata: { photos: uploads.length, newStatus: KycStatus.PENDING },
+      });
+
+      return ok(driver);
+    } catch (e) {
+      await this.discardUploads(uploads);
+      return this.response.errorHandler(e);
+    }
+  }
+
   private async discardUploads(uploads: { key: string; provider: any }[]) {
     if (uploads.length === 0) return;
     await Promise.all(uploads.map((upload) => this.storage.delete(upload.key, upload.provider)));

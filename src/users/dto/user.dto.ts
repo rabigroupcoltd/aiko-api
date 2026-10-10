@@ -63,3 +63,33 @@ export class CreateStaffDto {
   @IsEnum(STAFF_ROLES)
   role: (typeof STAFF_ROLES)[number];
 }
+
+export const DIRECTORY_TYPES = ['PASSENGER', 'DRIVER', 'STAFF'] as const;
+export const DRIVER_APPROVAL_FILTERS = ['NOT_SUBMITTED', 'PENDING', 'APPROVED', 'REJECTED'] as const;
+
+/** `GET /users/directory` — the admin's user-management tabs. */
+export class UserDirectoryQueryDto {
+  @ApiPropertyOptional({
+    enum: DIRECTORY_TYPES,
+    example: 'DRIVER',
+    description:
+      'PASSENGER: app users who have not chosen to drive. DRIVER: anyone who chose to drive, whether or not they have submitted documents yet. STAFF: admin and support accounts.',
+  })
+  @IsOptional()
+  @IsEnum(DIRECTORY_TYPES)
+  type?: (typeof DIRECTORY_TYPES)[number];
+
+  @ApiPropertyOptional({ example: 'ada', description: 'Name, email, phone or plate.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @ApiPropertyOptional({
+    enum: DRIVER_APPROVAL_FILTERS,
+    description: 'DRIVER tab only. NOT_SUBMITTED means they chose to drive but never sent documents.',
+  })
+  @IsOptional()
+  @IsEnum(DRIVER_APPROVAL_FILTERS)
+  approval?: (typeof DRIVER_APPROVAL_FILTERS)[number];
+}

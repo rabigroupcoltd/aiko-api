@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
@@ -15,7 +15,7 @@ import {
   ApiValidationError,
 } from '../common/swagger/api-envelope.decorator';
 import { USER_EXAMPLE } from '../common/swagger/examples';
-import { BlockUserDto, CreateStaffDto, UpdateUserDto } from './dto/user.dto';
+import { BlockUserDto, CreateStaffDto, UpdateUserDto, UserDirectoryQueryDto } from './dto/user.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('Users')
@@ -64,6 +64,46 @@ export class UsersController {
     try {
       const result = await this.usersService.createStaff(dto, actor);
       return this.response.handle(result, { message: 'Staff account created' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Get('directory')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPPORT')
+  @ApiOperation({
+    summary: 'User management list',
+    description:
+      'Admin/support only. One tab at a time — passengers, drivers (including those who never submitted documents) or staff — with per-tab counts, driver approval status and commission owed.',
+  })
+  @ApiUnauthorized()
+  @ApiForbidden('Requires one of the following roles: ADMIN, SUPPORT')
+  async directory(@Query() query: UserDirectoryQueryDto) {
+    try {
+      const result = await this.usersService.directory(query);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Get(':id/overview')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPPORT')
+  @ApiOperation({
+    summary: 'Everything about one user',
+    description:
+      'Admin/support only. The account, driver profile with documents and wallet, and trip and money totals as passenger and as driver.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', example: USER_EXAMPLE.id })
+  @ApiUnauthorized()
+  @ApiForbidden('Requires one of the following roles: ADMIN, SUPPORT')
+  @ApiNotFound('User not found')
+  async overview(@Param('id') id: string) {
+    try {
+      const result = await this.usersService.overview(id);
+      return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);
     }

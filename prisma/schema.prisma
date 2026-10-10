@@ -141,6 +141,9 @@ enum VehiclePhotoType {
   SIDE
   INTERIOR
   PLATE_NUMBER
+  /// KYC identity documents, captured on the rider documents step.
+  DRIVER_LICENSE
+  NATIONAL_ID
   OTHER
 }
 
