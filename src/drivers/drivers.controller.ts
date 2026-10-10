@@ -70,10 +70,7 @@ export class DriversController {
     private response: ResponsesService,
   ) {}
 
-  /**
-   * multipart/form-data: vehicle fields plus up to MAX_VEHICLE_PHOTOS files
-   * under the `photos` field.
-   */
+
   @Post('register')
   @UseGuards(AuthGuard('jwt'))
   @UseInterceptors(FilesInterceptor('photos', MAX_VEHICLE_PHOTOS, imageUploadOptions))
@@ -185,19 +182,6 @@ export class DriversController {
 
   // ------------------------------------------------------- shift lifecycle
 
-  /**
-   * The shift endpoints, all self-scoped.
-   *
-   * No `:id` in any of these paths. The token identifies the driver, so the app
-   * never has to hold a driver id and can never write to somebody else's
-   * presence by caching a stale one. `PATCH /drivers/:id/availability` below is
-   * the admin equivalent and keeps its id, because an admin genuinely is acting
-   * on another account.
-   *
-   * `GET /drivers/state` is declared before `GET /drivers/:id` on purpose —
-   * Nest matches routes in declaration order, and the id pattern would
-   * otherwise swallow the literal.
-   */
   @Get('state')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth('bearer')
@@ -317,6 +301,25 @@ export class DriversController {
   async findAll(@Query() query: ListDriversQueryDto) {
     try {
       const result = await this.driversService.findAll(query);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Get('applications/incomplete')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Riders who have not submitted their vehicle',
+    description:
+      'Admin only. Accounts that chose RIDER but never completed `POST /drivers/register`, so they have no driver profile to approve yet. Shown on the KYC queue so the operator can follow up.',
+  })
+  @ApiAdminErrors()
+  async incompleteApplications() {
+    try {
+      const result = await this.driversService.incompleteApplications();
       return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);
@@ -571,25 +574,22 @@ export class DriversController {
   }
 
   @Post(':id/pay-debt')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('ADMIN')
   @ApiBearerAuth('bearer')
   @ApiOperation({
-    summary: 'Pay down outstanding debt',
+    summary: 'Record a debt payment',
     description:
-      'The amount is capped at the current debt. Clearing enough debt to fall back under `debtLimit` also unblocks the driver.',
+      'Admin only — the admin records commission the driver has paid them. The amount is capped at the current debt. Falling back under the debt limit lets the driver take trips again; a manual block (`isBlocked`) is left alone.',
   })
   @ApiParam(DRIVER_ID_PARAM)
-  @ApiOkEnvelope({ ...DRIVER_EXAMPLE, currentDebt: 0, isBlocked: false }, { message: 'Debt payment recorded' })
+  @ApiOkEnvelope({ ...DRIVER_EXAMPLE, currentDebt: 0 }, { message: 'Debt payment recorded' })
   @ApiValidationError('No outstanding debt')
-  @ApiUnauthorized()
-  @ApiForbidden('You can only manage your own driver profile')
+  @ApiAdminErrors()
   @ApiNotFound('Driver not found')
   async payDebt(@Param('id') id: string, @Body() dto: PayDebtDto, @CurrentUser() user: JwtUser) {
     try {
-      const allowed = await this.driversService.assertCanManage(id, user);
-      if (allowed.error) return this.response.handle(allowed);
-
-      const result = await this.driversService.payDebt(id, dto.amount);
+      const result = await this.driversService.payDebt(id, dto.amount, user);
       return this.response.handle(result, { message: 'Debt payment recorded' });
     } catch (e) {
       return this.response.exception(e);
@@ -602,16 +602,21 @@ export class DriversController {
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Set the debt ceiling',
-    description: 'Admin only. Debt above this figure blocks the driver from taking trips.',
+    description:
+      'Admin only. Gives this driver their own limit; `null` puts them back on the platform-wide `DRIVER_DEBT_LIMIT` setting. Owing this much or more stops the driver taking new trips.',
   })
   @ApiParam(DRIVER_ID_PARAM)
   @ApiOkEnvelope({ ...DRIVER_EXAMPLE, debtLimit: 15000 }, { message: 'Debt limit updated' })
   @ApiValidationError('debtLimit must not be less than 0')
   @ApiAdminErrors()
   @ApiNotFound('Driver not found')
-  async updateDebtLimit(@Param('id') id: string, @Body() dto: UpdateDebtLimitDto) {
+  async updateDebtLimit(
+    @Param('id') id: string,
+    @Body() dto: UpdateDebtLimitDto,
+    @CurrentUser() actor: JwtUser,
+  ) {
     try {
-      const result = await this.driversService.updateDebtLimit(id, dto.debtLimit);
+      const result = await this.driversService.updateDebtLimit(id, dto.debtLimit ?? null, actor);
       return this.response.handle(result, { message: 'Debt limit updated' });
     } catch (e) {
       return this.response.exception(e);

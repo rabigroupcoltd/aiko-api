@@ -250,7 +250,7 @@ export class DispatchService implements OnModuleInit {
     if (claimed !== 'OK') return;
 
     const driver = await this.prisma.driver.findUnique({ where: { id: driverId } });
-    if (!driver || driver.isBlocked || driver.kycStatus !== 'APPROVED') return;
+    if (!driver || this.drivers.workBlockReason(driver)) return;
 
     const held = await this.prisma.order.count({
       where: { driverId, status: { in: DRIVER_ACTIVE_STATUSES } },

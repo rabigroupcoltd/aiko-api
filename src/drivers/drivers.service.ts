@@ -32,8 +32,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DriverLocationDto, NearbyDriversQueryDto } from '../redis/dto/driver-location.dto';
 import { HEARTBEAT_TTL_SECONDS } from '../redis/redis.keys';
 import { RedisService } from '../redis/redis.service';
+import { PlatformSettingsService } from '../settings/platform-settings.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadFile } from '../storage/storage.types';
+import { DriverDebtStatus, driverDebtStatus } from './driver-debt.util';
 import { ListDriversQueryDto, RegisterDriverDto, UpdateDriverDto } from './dto/driver.dto';
 
 @Injectable()
@@ -47,7 +49,41 @@ export class DriversService {
     private events: RideEventsService,
     private audit: AuditService,
     private response: ResponsesService,
+    private settings: PlatformSettingsService,
   ) {}
+
+  // ------------------------------------------------------------ eligibility
+
+  /** What this driver owes against the limit in force for them. */
+  debtStatus(driver: Pick<Driver, 'currentDebt' | 'debtLimit'>): DriverDebtStatus {
+    return driverDebtStatus(driver, this.settings.getNumber('DRIVER_DEBT_LIMIT'));
+  }
+
+  /**
+   * Why this driver may not take new work, or null when they may.
+   *
+   * The one rule every new-work path asks — going online, the marketplace grid,
+   * reserving, bidding — so the reasons a driver hears are the same everywhere.
+   * Work already held is never affected: a driver who crosses the debt limit
+   * on their first drop still finishes the rest.
+   */
+  workBlockReason(
+    driver: Pick<Driver, 'kycStatus' | 'isBlocked' | 'currentDebt' | 'debtLimit'>,
+  ): string | null {
+    if (driver.kycStatus !== KycStatus.APPROVED) return 'Your KYC is not approved yet';
+    if (driver.isBlocked) return 'Your account has been blocked. Please contact support.';
+
+    const debt = this.debtStatus(driver);
+    if (debt.locked) {
+      return `You owe ₦${debt.current.toLocaleString()} in commission, which has reached your limit of ₦${debt.limit.toLocaleString()}. Pay it to an admin to start taking trips again.`;
+    }
+    return null;
+  }
+
+  /** Adds the derived debt view to a driver row for API responses. */
+  private withDebt<T extends Pick<Driver, 'currentDebt' | 'debtLimit'>>(driver: T) {
+    return { ...driver, debt: this.debtStatus(driver) };
+  }
 
   /**
    * Photos go to object storage before the transaction opens, so a database
@@ -143,7 +179,37 @@ export class DriversService {
         orderBy: { createdAt: 'desc' },
       });
 
-      return ok(drivers);
+      return ok(drivers.map((driver) => this.withDebt(driver)));
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
+  /**
+   * Accounts that picked RIDER but have no driver row.
+   *
+   * There is nothing to approve until the vehicle is registered, so the KYC
+   * queue — which lists driver rows — would otherwise never show them, and the
+   * operator would have no way to know they are stuck.
+   */
+  async incompleteApplications(): Promise<ServiceResult> {
+    try {
+      const users = await this.prisma.user.findMany({
+        where: { accountType: AccountType.RIDER, driver: null },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          profilePhotoUrl: true,
+          onboardingStep: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      return ok(users);
     } catch (e) {
       return this.response.errorHandler(e);
     }
@@ -162,7 +228,7 @@ export class DriversService {
       });
 
       if (!driver) return notFound('Driver not found');
-      return ok(driver);
+      return ok(this.withDebt(driver));
     } catch (e) {
       return this.response.errorHandler(e);
     }
@@ -392,12 +458,8 @@ export class DriversService {
       const driver = allowed.body as Driver;
 
       if (isAvailable) {
-        if (driver.kycStatus !== KycStatus.APPROVED) {
-          return forbidden('KYC must be approved before going online');
-        }
-        if (driver.isBlocked) {
-          return forbidden('Driver is blocked due to excessive debt');
-        }
+        const blocked = this.workBlockReason(driver);
+        if (blocked) return forbidden(blocked);
         await this.redis.setAvailable(id, driver.vehicleType);
         await this.redis.heartbeat(id);
       } else {
@@ -489,7 +551,13 @@ export class DriversService {
       if (!driver.isAvailable) return badRequest('You are offline — go online first');
 
       await this.redis.heartbeat(driver.id);
-      await this.redis.setAvailable(driver.id, driver.vehicleType);
+      // Presence is kept for a debt-locked driver still finishing held orders;
+      // only rejoining the pool for new work is withheld.
+      if (this.workBlockReason(driver)) {
+        await this.redis.setUnavailable(driver.id, driver.vehicleType);
+      } else {
+        await this.redis.setAvailable(driver.id, driver.vehicleType);
+      }
 
       return ok({
         driverId: driver.id,
@@ -559,9 +627,13 @@ export class DriversService {
         }),
       ]);
 
+      const debt = this.debtStatus(driver);
+      const blockReason = this.workBlockReason(driver);
+
       const status = deriveDispatchStatus({
         isAvailable: driver.isAvailable,
         isBlocked: driver.isBlocked,
+        debtLocked: debt.locked,
         kycStatus: driver.kycStatus,
         heldCount,
         legacyCount,
@@ -586,7 +658,11 @@ export class DriversService {
         /** Why the driver cannot go online, when they cannot. */
         kycStatus: driver.kycStatus,
         isBlocked: driver.isBlocked,
-        canGoOnline: driver.kycStatus === KycStatus.APPROVED && !driver.isBlocked,
+        canGoOnline: blockReason === null,
+        /** Shown to the driver when `canGoOnline` is false. */
+        blockReason,
+        /** Commission owed from cash trips against the limit in force. */
+        debt,
 
         held: heldCount + legacyCount,
         capacity: MAX_RESERVED_ORDERS_PER_DRIVER,
@@ -632,7 +708,7 @@ export class DriversService {
         recordedAt,
       });
 
-      if (driver.isAvailable && driver.kycStatus === KycStatus.APPROVED) {
+      if (driver.isAvailable && !this.workBlockReason(driver)) {
         await this.redis.setAvailable(driver.id, driver.vehicleType);
 
         // Announced on every fix, not just the first. It costs one Redis SETNX
@@ -677,7 +753,11 @@ export class DriversService {
       include: { user: { select: CONTACT_USER_SELECT } },
     });
 
-    const byId = new Map(drivers.map((driver) => [driver.id, driver]));
+    const byId = new Map(
+      drivers
+        .filter((driver) => !this.debtStatus(driver).locked)
+        .map((driver) => [driver.id, driver]),
+    );
 
     return nearby
       .filter((entry) => byId.has(entry.driverId))
@@ -739,7 +819,8 @@ export class DriversService {
         acceptanceRate: attempted > 0 ? round1((driver.acceptedTrips / attempted) * 100) : 0,
         cancellationRate: attempted > 0 ? round1((driver.cancelledTrips / attempted) * 100) : 0,
         currentDebt: driver.currentDebt,
-        debtLimit: driver.debtLimit,
+        debtLimit: this.debtStatus(driver).limit,
+        debt: this.debtStatus(driver),
       });
     } catch (e) {
       return this.response.errorHandler(e);
@@ -756,10 +837,33 @@ export class DriversService {
     }
   }
 
-  async updateDebtLimit(id: string, debtLimit: number): Promise<ServiceResult> {
+  /** null puts the driver back on the platform-wide DRIVER_DEBT_LIMIT. */
+  async updateDebtLimit(
+    id: string,
+    debtLimit: number | null,
+    actor?: JwtUser,
+  ): Promise<ServiceResult> {
     try {
       const driver = await this.prisma.driver.update({ where: { id }, data: { debtLimit } });
-      return ok(driver);
+      const debt = this.debtStatus(driver);
+
+      // Lowered under what they already owe — out of the pool now, not at
+      // their next heartbeat.
+      if (debt.locked) await this.redis.setUnavailable(id, driver.vehicleType);
+
+      await this.audit.record({
+        actor,
+        action: 'driver.debt-limit',
+        entity: AuditEntity.DRIVER,
+        entityId: id,
+        summary:
+          debtLimit == null
+            ? `Reset debt limit for driver ${id} to the platform default`
+            : `Set debt limit for driver ${id} to ${debtLimit}`,
+        metadata: { debtLimit, effectiveLimit: debt.limit, currentDebt: driver.currentDebt },
+      });
+
+      return ok(this.withDebt(driver));
     } catch (e) {
       return this.response.errorHandler(e);
     }
@@ -789,8 +893,14 @@ export class DriversService {
     }
   }
 
-  /** Clears debt, records the ledger entry, and unblocks once back under the limit. */
-  async payDebt(id: string, requestedAmount: number): Promise<ServiceResult> {
+  /**
+   * Records a payment an admin has received and writes the ledger entry.
+   *
+   * Never touches `isBlocked` — the debt lock is derived, so falling back
+   * under the limit is what lets the driver work again, and a manual block an
+   * admin set for another reason stays put.
+   */
+  async payDebt(id: string, requestedAmount: number, actor?: JwtUser): Promise<ServiceResult> {
     try {
       const driver = await this.prisma.driver.findUnique({
         where: { id },
@@ -802,14 +912,12 @@ export class DriversService {
 
       const amount = Math.min(requestedAmount, driver.currentDebt);
       const balanceAfter = driver.wallet?.availableBalance ?? 0;
-      const clearsBlock = driver.isBlocked && driver.currentDebt - amount < driver.debtLimit;
 
       const [updated] = await this.prisma.$transaction([
         this.prisma.driver.update({
           where: { id },
           data: {
             currentDebt: { decrement: amount },
-            ...(clearsBlock ? { isBlocked: false } : {}),
           },
         }),
         this.prisma.driverWallet.update({
@@ -828,7 +936,18 @@ export class DriversService {
         }),
       ]);
 
-      return ok(updated);
+      await this.audit.record({
+        actor,
+        action: 'driver.debt-payment',
+        entity: AuditEntity.DRIVER,
+        entityId: id,
+        summary: `Recorded a debt payment of ${amount} for driver ${id}`,
+        metadata: { amount, debtBefore: driver.currentDebt, debtAfter: updated.currentDebt },
+      });
+
+      // Back under the limit while still on shift: the next heartbeat puts them
+      // back in the pool, since the lock is derived.
+      return ok(this.withDebt(updated));
     } catch (e) {
       return this.response.errorHandler(e);
     }

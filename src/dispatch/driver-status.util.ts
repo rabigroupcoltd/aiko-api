@@ -7,6 +7,8 @@ export type DispatchStatus = 'OFFLINE' | 'AVAILABLE' | 'BUSY';
 export interface DispatchStatusInput {
   isAvailable: boolean;
   isBlocked: boolean;
+  /** Owes at least their debt limit — finishes held work, takes nothing new. */
+  debtLocked?: boolean;
   kycStatus: KycStatus;
   /** Marketplace orders held: RESERVED through IN_TRANSIT. */
   heldCount: number;
@@ -30,6 +32,11 @@ export interface DispatchStatusInput {
 export function deriveDispatchStatus(input: DispatchStatusInput): DispatchStatus {
   if (!input.isAvailable || input.isBlocked || input.kycStatus !== KycStatus.APPROVED) {
     return 'OFFLINE';
+  }
+
+  // Never AVAILABLE, but still BUSY while delivering what they already hold.
+  if (input.debtLocked) {
+    return input.heldCount + input.legacyCount > 0 ? 'BUSY' : 'OFFLINE';
   }
 
   if (input.heldCount >= MAX_RESERVED_ORDERS_PER_DRIVER) return 'BUSY';

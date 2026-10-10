@@ -12,6 +12,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { VEHICLE_TYPES } from '../../pricing/dto/pricing.dto';
 
@@ -157,10 +158,17 @@ export class PayDebtDto {
 }
 
 export class UpdateDebtLimitDto {
-  @ApiProperty({ example: 15000, minimum: 0, description: 'Debt above this blocks the driver.' })
+  @ApiProperty({
+    example: 15000,
+    minimum: 0,
+    nullable: true,
+    description:
+      'This driver’s own limit; owing this much or more stops new trips. 0 means no limit. null follows the platform DRIVER_DEBT_LIMIT setting.',
+  })
+  @ValidateIf((dto) => dto.debtLimit !== null)
   @IsNumber()
   @Min(0)
-  debtLimit: number;
+  debtLimit: number | null;
 }
 
 export class BlockDriverDto {

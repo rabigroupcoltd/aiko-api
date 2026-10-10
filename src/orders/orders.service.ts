@@ -487,7 +487,7 @@ export class OrdersService {
             },
       });
 
-      const driver = await tx.driver.update({
+      await tx.driver.update({
         where: { id: order.driverId! },
         data: {
           totalTrips: { increment: 1 },
@@ -508,14 +508,6 @@ export class OrdersService {
         },
       });
 
-      // Debt gate: once over the limit the driver cannot take new trips.
-      if (driver.currentDebt >= driver.debtLimit && !driver.isBlocked) {
-        await tx.driver.update({
-          where: { id: driver.id },
-          data: { isBlocked: true, isAvailable: false },
-        });
-      }
-
       const now = new Date();
 
       return tx.order.update({
@@ -530,8 +522,10 @@ export class OrdersService {
       });
     });
 
-    if (updated.driver?.isBlocked) {
-      await this.redis.removeDriver(updated.driver.id);
+    // Debt gate: at or over the limit, no new work — but presence stays, so any
+    // orders still held are tracked and delivered as normal.
+    if (updated.driver && this.drivers.workBlockReason(updated.driver)) {
+      await this.redis.setUnavailable(updated.driver.id, updated.driver.vehicleType);
     }
 
     this.events.emit('order.status-changed', updated);

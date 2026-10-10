@@ -12,13 +12,7 @@ import {
 } from '../common/swagger/examples';
 import { AdminService } from './admin.service';
 
-/**
- * The admin dashboard's own endpoints.
- *
- * Distinct from `/api/analytics`, which reports how the business is doing over a
- * period. Everything here answers "what is happening right now" — figures that
- * go stale in minutes and drive the operator's next action.
- */
+
 @ApiTags('Admin')
 @ApiBearerAuth('bearer')
 @Controller('admin')

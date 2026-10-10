@@ -259,7 +259,8 @@ model Driver {
   kycRejectionReason String?
   isAvailable        Boolean     @default(false)
   isBlocked          Boolean     @default(false)
-  debtLimit          Float       @default(10000)
+  /// Per-driver override. Null follows the DRIVER_DEBT_LIMIT platform setting.
+  debtLimit          Float?
   currentDebt        Float       @default(0)
   rating             Float       @default(5.0)
   ratingCount        Int         @default(0)

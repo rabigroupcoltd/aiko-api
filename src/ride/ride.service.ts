@@ -209,8 +209,8 @@ export class RideService implements OnModuleInit {
       if (found.error) return found;
 
       const driver = found.body as Driver;
-      if (driver.kycStatus !== KycStatus.APPROVED) return forbidden('KYC not approved');
-      if (driver.isBlocked) return forbidden('Driver is blocked');
+      const blocked = this.drivers.workBlockReason(driver);
+      if (blocked) return forbidden(blocked);
 
       const open = await this.requireOpenRequest(dto.requestId);
       if (open.error) return open;
@@ -411,8 +411,8 @@ export class RideService implements OnModuleInit {
       if (found.error) return found;
 
       const driver = found.body as Driver;
-      if (driver.kycStatus !== KycStatus.APPROVED) return forbidden('KYC not approved');
-      if (driver.isBlocked) return forbidden('Driver is blocked');
+      const blocked = this.drivers.workBlockReason(driver);
+      if (blocked) return forbidden(blocked);
 
       const radiusKm = query.radiusKm ?? SEARCH_RADIUS_KM;
       const limit = query.limit ?? 20;
@@ -464,7 +464,7 @@ export class RideService implements OnModuleInit {
     if (claimed !== 'OK') return;
 
     const driver = await this.prisma.driver.findUnique({ where: { id: driverId } });
-    if (!driver || driver.isBlocked || driver.kycStatus !== KycStatus.APPROVED) return;
+    if (!driver || this.drivers.workBlockReason(driver)) return;
 
     const nearby = await this.openRequestsNear(driver, lat, lng, SEARCH_RADIUS_KM, MAX_MATCHES);
 

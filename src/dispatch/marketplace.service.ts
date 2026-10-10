@@ -404,6 +404,7 @@ export class MarketplaceService {
     return deriveDispatchStatus({
       isAvailable: driver.isAvailable,
       isBlocked: driver.isBlocked,
+      debtLocked: this.drivers.debtStatus(driver).locked,
       kycStatus: driver.kycStatus,
       heldCount: held,
       legacyCount: legacy,
@@ -440,8 +441,8 @@ export class MarketplaceService {
 
     const driver = found.body as Driver;
 
-    if (driver.kycStatus !== KycStatus.APPROVED) return forbidden('Your KYC is not approved yet');
-    if (driver.isBlocked) return forbidden('Your account is blocked due to outstanding debt');
+    const blocked = this.drivers.workBlockReason(driver);
+    if (blocked) return forbidden(blocked);
     if (!driver.isAvailable) return badRequest('Go online to see available orders');
 
     return ok(driver);

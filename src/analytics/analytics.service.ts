@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
 import { ResponsesService } from '../common/responses/responses.service';
 import { ServiceResult, ok } from '../common/responses/response.types';
+import { driverDebtStatus } from '../drivers/driver-debt.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { PlatformSettingsService } from '../settings/platform-settings.service';
 
 /**
  * An order that finished and earned money, in either lane.
@@ -22,6 +24,7 @@ export class AnalyticsService {
   constructor(
     private prisma: PrismaService,
     private response: ResponsesService,
+    private settings: PlatformSettingsService,
   ) {}
 
   async getOverview(): Promise<ServiceResult> {
@@ -112,7 +115,8 @@ export class AnalyticsService {
             earnings: driver.orders.reduce((sum, order) => sum + order.driverEarnings, 0),
             platformFeePaid: driver.orders.reduce((sum, order) => sum + order.platformFee, 0),
             currentDebt: driver.currentDebt,
-            debtLimit: driver.debtLimit,
+            debtLimit: driverDebtStatus(driver, this.settings.getNumber('DRIVER_DEBT_LIMIT')).limit,
+            debtLocked: driverDebtStatus(driver, this.settings.getNumber('DRIVER_DEBT_LIMIT')).locked,
             rating: driver.rating,
             acceptanceRate:
               attempted > 0 ? ((driver.acceptedTrips / attempted) * 100).toFixed(1) : '0.0',

@@ -81,7 +81,9 @@ export class PlatformSettingsService implements OnModuleInit {
           const row = byKey.get(key);
           return {
             key,
+            label: PLATFORM_SETTINGS[key].label,
             value: this.getNumber(key),
+            min: PLATFORM_SETTINGS[key].min,
             description: PLATFORM_SETTINGS[key].description,
             updatedAt: row?.updatedAt.toISOString() ?? null,
           };
@@ -98,6 +100,10 @@ export class PlatformSettingsService implements OnModuleInit {
       if (!Number.isFinite(value)) return badRequest('value must be a finite number');
 
       const definition = PLATFORM_SETTINGS[key];
+      if (value < definition.min) {
+        return badRequest(`${definition.label} cannot be less than ${definition.min}`);
+      }
+
       const row = await this.prisma.platformSetting.upsert({
         where: { key },
         create: { key, value: String(value), description: definition.description },
@@ -108,7 +114,9 @@ export class PlatformSettingsService implements OnModuleInit {
 
       return ok({
         key,
+        label: definition.label,
         value,
+        min: definition.min,
         description: definition.description,
         updatedAt: row.updatedAt.toISOString(),
       });
