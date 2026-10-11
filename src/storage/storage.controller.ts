@@ -19,7 +19,6 @@ export class StorageController {
     private response: ResponsesService,
   ) {}
 
-  /** Lets the admin dashboard show which backend uploads are currently going to. */
   @Get('provider')
   @Roles('ADMIN')
   @ApiOperation({

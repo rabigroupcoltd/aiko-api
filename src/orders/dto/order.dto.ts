@@ -17,13 +17,11 @@ import {
 import { VEHICLE_TYPES } from '../../pricing/dto/pricing.dto';
 
 export const ORDER_STATUSES = [
-  // Ride lane — the broadcast-and-bid flow.
   'PENDING',
   'ACCEPTED',
   'ARRIVED',
   'IN_PROGRESS',
   'COMPLETED',
-  // Marketplace lane — drivers claim the order themselves.
   'SEARCHING_FOR_DRIVER',
   'RESERVED',
   'DRIVER_ARRIVING_PICKUP',
@@ -34,10 +32,6 @@ export const ORDER_STATUSES = [
   'CANCELLED',
 ] as const;
 
-/**
- * `fare` is deliberately absent — it is computed server-side from the active
- * PricingRule for `vehicleType` so the client cannot set its own price.
- */
 export class CreateOrderDto {
   @ApiProperty({ enum: VEHICLE_TYPES, example: 'TRICYCLE' })
   @IsEnum(VEHICLE_TYPES)

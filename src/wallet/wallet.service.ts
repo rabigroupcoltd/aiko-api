@@ -6,7 +6,6 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const MIN_WITHDRAWAL = Number(process.env.MIN_WITHDRAWAL || 500);
 
-/** Thrown inside the withdrawal transaction to force a rollback. */
 class InsufficientBalanceError extends Error {}
 
 @Injectable()
@@ -21,7 +20,6 @@ export class WalletService {
       const wallet = await this.prisma.driverWallet.findUnique({ where: { driverId } });
       if (wallet) return ok(wallet);
 
-      // A driver registered before wallets existed still needs one.
       const driver = await this.prisma.driver.findUnique({ where: { id: driverId } });
       if (!driver) return notFound('Driver not found');
 
@@ -51,11 +49,6 @@ export class WalletService {
     }
   }
 
-  /**
-   * Debits the wallet and writes the ledger entry in one transaction, with the
-   * balance guard inside the update so two concurrent withdrawals cannot both
-   * pass the check.
-   */
   async withdraw(driverId: string, amount: number): Promise<ServiceResult> {
     try {
       if (amount < MIN_WITHDRAWAL) return badRequest(`Minimum withdrawal is ${MIN_WITHDRAWAL}`);

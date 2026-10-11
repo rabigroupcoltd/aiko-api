@@ -35,18 +35,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { CreateOrderDto, ListOrdersQueryDto, RateOrderDto, SendMessageDto } from './dto/order.dto';
 
-/**
- * Two lanes, one map. Terminal states have no outgoing transitions.
- *
- * The ride lane (PENDING → … → COMPLETED) is unchanged. The marketplace lane
- * (SEARCHING_FOR_DRIVER → … → DELIVERED) is added alongside it rather than
- * replacing it, because the bid flow still produces the first kind.
- *
- * Note SEARCHING_FOR_DRIVER has no direct edge to RESERVED: reserving is not a
- * status update, it is the atomic claim in MarketplaceService, and routing it
- * through here would reintroduce the read-then-write race that claim exists to
- * eliminate.
- */
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.PENDING]: [OrderStatus.ACCEPTED, OrderStatus.CANCELLED],
   [OrderStatus.ACCEPTED]: [OrderStatus.ARRIVED, OrderStatus.IN_PROGRESS, OrderStatus.CANCELLED],
@@ -58,7 +46,6 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.SEARCHING_FOR_DRIVER]: [OrderStatus.CANCELLED, OrderStatus.NO_DRIVER_FOUND],
   [OrderStatus.RESERVED]: [
     OrderStatus.DRIVER_ARRIVING_PICKUP,
-    // A driver already at the pickup can collect without announcing the leg.
     OrderStatus.PICKED_UP,
     OrderStatus.CANCELLED,
   ],
@@ -69,15 +56,8 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.NO_DRIVER_FOUND]: [],
 };
 
-/** Statuses that settle the order's money and free the driver's capacity slot. */
 const SETTLING_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED, OrderStatus.DELIVERED];
 
-/**
- * Past this point the customer can no longer call it off themselves.
- *
- * §31: once the driver physically holds the order, unwinding it is an operations
- * problem, not a button.
- */
 const CUSTOMER_CANCELLABLE: OrderStatus[] = [
   OrderStatus.PENDING,
   OrderStatus.SEARCHING_FOR_DRIVER,
@@ -87,7 +67,6 @@ const CUSTOMER_CANCELLABLE: OrderStatus[] = [
   OrderStatus.DRIVER_ARRIVING_PICKUP,
 ];
 
-/** Stages only the driver holding the order may declare. */
 const DRIVER_ONLY_TRANSITIONS: OrderStatus[] = [
   OrderStatus.DRIVER_ARRIVING_PICKUP,
   OrderStatus.PICKED_UP,
@@ -98,7 +77,6 @@ const DRIVER_ONLY_TRANSITIONS: OrderStatus[] = [
   OrderStatus.COMPLETED,
 ];
 
-/** Nothing more happens on an order in one of these. */
 const CLOSED_STATUSES: OrderStatus[] = [
   OrderStatus.COMPLETED,
   OrderStatus.DELIVERED,
@@ -126,15 +104,6 @@ export class OrdersService {
     private response: ResponsesService,
   ) {}
 
-  /**
-   * Fare, platform fee and driver earnings all come from the pricing rule.
-   *
-   * `dispatch` is what separates the two lanes. Left off, this is the original
-   * direct booking and the order sits at PENDING. Set — which is what the
-   * customer's Confirm Order button sends — the order opens at
-   * SEARCHING_FOR_DRIVER and is announced to nearby drivers, who claim it
-   * themselves.
-   */
   async create(userId: string, dto: CreateOrderDto): Promise<ServiceResult> {
     try {
       const quoted = await this.pricing.estimate({
@@ -166,7 +135,6 @@ export class OrdersService {
           durationMins: quote.durationMins,
           fare: quote.fare,
           currency: quote.currency,
-          // Frozen so a later admin price change never rewrites a past trip.
           pricingSnapshot: quote.breakdown as unknown as Prisma.InputJsonValue,
           platformFee: quote.platformFee,
           driverEarnings: quote.driverEarnings,
@@ -184,9 +152,6 @@ export class OrdersService {
 
       this.events.emit('order.created', order);
 
-      // Fire and forget: the customer's order exists either way, and a dispatch
-      // failure must not turn a created order into a 500. The widening worker
-      // picks up anything the first pass missed.
       if (toMarketplace) {
         this.dispatch.dispatch(order).catch((e) =>
           this.logger.error(`Dispatch for order ${order.id} failed: ${e?.message ?? e}`),
@@ -199,10 +164,6 @@ export class OrdersService {
     }
   }
 
-  /**
-   * Creates an order that is already assigned to a driver, off the back of an
-   * accepted bid. `fareOverride` is only ever passed when bid pricing is on.
-   */
   async createFromRideRequest(
     requestId: string,
     driverId: string,
@@ -270,10 +231,6 @@ export class OrdersService {
       if (query.userId) where.userId = query.userId;
       if (query.driverId) where.driverId = query.driverId;
 
-      // Non-staff only ever see their own trips, whichever side they are on.
-      // Support looks up orders on the same footing as admin — that is the
-      // job — but never gets the driver-only-transition or free-cancellation
-      // overrides further down, which stay admin-only.
       if (!isStaffViewer(user)) {
         const driver = await this.prisma.driver.findUnique({ where: { userId: user.sub } });
         where.OR = driver ? [{ userId: user.sub }, { driverId: driver.id }] : [{ userId: user.sub }];
@@ -317,10 +274,6 @@ export class OrdersService {
     }
   }
 
-  /**
-   * Atomic claim: the status guard inside updateMany means only one driver can
-   * win a PENDING order, even with concurrent accepts.
-   */
   async acceptOrder(orderId: string, userId: string): Promise<ServiceResult> {
     try {
       const found = await this.drivers.requireDriverForUser(userId);
@@ -381,8 +334,6 @@ export class OrdersService {
         return badRequest(`Cannot move an order from ${order.status} to ${status}`);
       }
 
-      // Everything past a reservation is the driver's to declare. A customer
-      // must not be able to mark their own order picked up or delivered.
       if (DRIVER_ONLY_TRANSITIONS.includes(status)) {
         const isDriver = await this.isAssignedDriver(order, user);
         if (!isDriver && !user.roles?.includes('ADMIN')) {
@@ -401,7 +352,6 @@ export class OrdersService {
           status,
           ...(status === OrderStatus.ARRIVED ? { arrivedAt: now } : {}),
           ...(status === OrderStatus.IN_PROGRESS ? { startedAt: now } : {}),
-          // The RESERVED → PICKED_UP boundary: the driver physically has it now.
           ...(status === OrderStatus.PICKED_UP ? { pickedUpAt: now, startedAt: now } : {}),
         },
         include: ORDER_INCLUDE,
@@ -416,12 +366,6 @@ export class OrdersService {
     }
   }
 
-  /**
-   * The route across everything the caller's driver profile is holding, plus
-   * ETAs — the same plan the marketplace's active view returns, exposed here so
-   * a customer's tracking screen can be told when *their* order lands without
-   * learning anything about the others on the route.
-   */
   async customerEta(orderId: string, user: JwtUser): Promise<ServiceResult> {
     try {
       const order = await this.prisma.order.findUnique({ where: { id: orderId } });
@@ -432,8 +376,6 @@ export class OrdersService {
 
       const eta = await this.routes.customerEta(order);
 
-      // §20: the customer learns that their driver has other work, and how long
-      // it costs them — never what that other work is or who it belongs to.
       const otherOrders = order.driverId
         ? await this.prisma.order.count({
             where: {
@@ -450,17 +392,6 @@ export class OrdersService {
     }
   }
 
-  /**
-   * Settlement runs in one transaction so the order, driver counters, wallet
-   * and ledger entry can never disagree.
-   *
-   * CASH: the driver already holds the money, so the platform fee becomes debt.
-   * BANK_TRANSFER: the platform holds the money, so earnings are credited.
-   *
-   * Scoped to one order, always. A driver finishing the second of three orders
-   * settles exactly that order's fare and frees exactly one capacity slot — §22
-   * and §34. There is no notion of settling a route.
-   */
   private async complete(order: Order, status: OrderStatus): Promise<ServiceResult> {
     if (!order.driverId) return badRequest('Order has no assigned driver');
 
@@ -522,8 +453,6 @@ export class OrdersService {
       });
     });
 
-    // Debt gate: at or over the limit, no new work — but presence stays, so any
-    // orders still held are tracked and delivered as normal.
     if (updated.driver && this.drivers.workBlockReason(updated.driver)) {
       await this.redis.setUnavailable(updated.driver.id, updated.driver.vehicleType);
     }
@@ -531,21 +460,11 @@ export class OrdersService {
     this.events.emit('order.status-changed', updated);
     if (status === OrderStatus.DELIVERED) this.events.emit('order.delivered', updated);
 
-    // A slot just freed. BUSY → AVAILABLE is derived, not stored, but the driver
-    // still needs telling so their grid repopulates without a manual refresh —
-    // and `driver.available` is the event the marketplace sweep already listens
-    // for, so this reuses that path rather than inventing a second one.
     await this.announceCapacityFreed(updated.driverId);
 
     return ok(updated);
   }
 
-  /**
-   * Tells the dispatcher a driver has room again.
-   *
-   * Silent when the driver is still full, offline, or has no known position —
-   * the sweep would find nothing to offer in any of those cases.
-   */
   private async announceCapacityFreed(driverId: string | null): Promise<void> {
     if (!driverId) return;
 
@@ -569,17 +488,7 @@ export class OrdersService {
     });
   }
 
-  /**
-   * Cancellation rules, by who is asking and how far the order has gone — §31.
-   *
-   * Before a driver commits, a customer may simply withdraw. Once reserved they
-   * still can, but it costs the driver a wasted trip, so it is attributed. Once
-   * the driver physically has the parcel the customer cannot unwind it at all —
-   * only the driver or an admin, who have to account for where it ended up.
-   */
   private async cancel(order: Order, user: JwtUser, reason?: string): Promise<ServiceResult> {
-    // Attribute the cancellation to the driver only when the driver is the one
-    // cancelling — an admin cancelling on their behalf must not cost them.
     const assignedDriver = order.driverId
       ? await this.prisma.driver.findUnique({ where: { id: order.driverId } })
       : null;
@@ -597,7 +506,6 @@ export class OrdersService {
       order.status === OrderStatus.PENDING || order.status === OrderStatus.SEARCHING_FOR_DRIVER;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // Only count it against the driver if they had already committed to the trip.
       if (order.driverId && cancelledByDriver && !uncommitted) {
         await tx.driver.update({
           where: { id: order.driverId },
@@ -618,13 +526,10 @@ export class OrdersService {
 
     this.events.emit('order.cancelled', updated);
 
-    // A driver who dropped an order has a slot free again.
     if (order.driverId) await this.announceCapacityFreed(order.driverId);
 
     return ok(updated);
   }
-
-  // -------------------------------------------------------------- messages
 
   async sendMessage(orderId: string, user: JwtUser, dto: SendMessageDto): Promise<ServiceResult> {
     try {
@@ -634,8 +539,6 @@ export class OrdersService {
       const allowed = await this.assertParticipant(order, user);
       if (allowed.error) return allowed;
 
-      // §29: chat opens the moment a driver reserves and closes when the order
-      // does. There is nobody on the other end before or after.
       if (CLOSED_STATUSES.includes(order.status)) return badRequest('This order is closed');
       if (!order.driverId) return badRequest('Chat opens once a driver takes your order');
 
@@ -671,18 +574,6 @@ export class OrdersService {
     }
   }
 
-  /**
-   * Mark the other side's messages as read.
-   *
-   * A separate call rather than a side effect of `getMessages`, because the two
-   * answer different questions. The chat screen polls every twenty seconds as a
-   * backstop for a dropped socket, and a poll running in a backgrounded app is
-   * not somebody reading — marking on read would clear the badge for messages
-   * nobody has seen.
-   *
-   * Only the *other* party's messages are touched: your own are read by
-   * definition, and including them would let a sender clear their own receipt.
-   */
   async markMessagesRead(orderId: string, user: JwtUser): Promise<ServiceResult> {
     try {
       const order = await this.prisma.order.findUnique({ where: { id: orderId } });
@@ -693,15 +584,10 @@ export class OrdersService {
 
       const readAt = new Date();
       const { count } = await this.prisma.rideMessage.updateMany({
-        // `readAt: null` keeps this idempotent — re-reading an open chat writes
-        // nothing and, more importantly, does not move the timestamp on a
-        // message that was already read.
         where: { orderId, senderId: { not: user.sub }, readAt: null },
         data: { readAt },
       });
 
-      // Tell the other party their messages landed. Only when something
-      // actually changed, so an idle chat screen does not emit on every poll.
       if (count > 0) {
         this.events.emit('order.messages-read', {
           orderId,
@@ -717,20 +603,8 @@ export class OrdersService {
     }
   }
 
-  /**
-   * Unread message counts, keyed by order.
-   *
-   * One query for every chat the caller is party to, rather than one per order:
-   * a driver holding three orders needs three badges on one screen, and asking
-   * per order would be three round trips for a number that decorates a button.
-   *
-   * Closed orders are excluded. Their chat is closed too, so an unread message
-   * on a delivered order is a badge that can never be cleared by opening it.
-   */
   async unreadCounts(user: JwtUser): Promise<ServiceResult> {
     try {
-      // The caller is a passenger by user id and a driver by driver id, and may
-      // legitimately be both on different orders.
       const driver = await this.prisma.driver.findUnique({
         where: { userId: user.sub },
         select: { id: true },
@@ -763,9 +637,6 @@ export class OrdersService {
     }
   }
 
-  // --------------------------------------------------------------- ratings
-
-  /** Rates the other party; a driver's aggregate is recomputed as a running mean. */
   async rate(orderId: string, user: JwtUser, dto: RateOrderDto): Promise<ServiceResult> {
     try {
       const order = await this.prisma.order.findUnique({
@@ -816,8 +687,6 @@ export class OrdersService {
     }
   }
 
-  // ----------------------------------------------------------------- guards
-
   private async assertParticipant(order: Order, user: JwtUser): Promise<ServiceResult> {
     if (isStaffViewer(user)) return ok(true);
     if (order.userId === user.sub) return ok(true);
@@ -830,7 +699,6 @@ export class OrdersService {
     return forbidden('You are not a participant in this trip');
   }
 
-  /** True when the caller is the driver this order is assigned to. */
   private async isAssignedDriver(order: Order, user: JwtUser): Promise<boolean> {
     if (!order.driverId) return false;
     const driver = await this.prisma.driver.findUnique({ where: { id: order.driverId } });
@@ -838,12 +706,6 @@ export class OrdersService {
   }
 }
 
-/**
- * Admin and support both see every order — that is the "look up orders" half
- * of support's job. Kept separate from the ADMIN-only checks elsewhere in
- * this file (the driver-only-transition override, free cancellation): those
- * carry money or delivery-state consequences support is not meant to touch.
- */
 function isStaffViewer(user: JwtUser): boolean {
   return Boolean(user.roles?.includes('ADMIN') || user.roles?.includes('SUPPORT'));
 }

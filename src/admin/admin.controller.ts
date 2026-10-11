@@ -12,7 +12,6 @@ import {
 } from '../common/swagger/examples';
 import { AdminService } from './admin.service';
 
-
 @ApiTags('Admin')
 @ApiBearerAuth('bearer')
 @Controller('admin')

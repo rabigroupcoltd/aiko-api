@@ -11,12 +11,6 @@ import { ResponsesService, extractHttpMessage } from '../responses/responses.ser
 import { mapPrismaError } from '../responses/prisma-error';
 import { ERR, ServiceErrorCode } from '../responses/response.types';
 
-/**
- * Safety net. Controllers catch their own errors, but guards, pipes,
- * interceptors and anything genuinely unexpected bypass those catches — this
- * makes sure those still come back in the same `{ code, message, error }`
- * envelope instead of Nest's default shape.
- */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
@@ -24,7 +18,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly responses: ResponsesService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
-    // WebSocket and RPC contexts have no HTTP response to write to.
     if (host.getType() !== 'http') throw exception;
 
     const ctx = host.switchToHttp();
@@ -43,9 +36,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       body.code !== HttpStatus.UNAUTHORIZED &&
       body.code !== HttpStatus.NOT_FOUND
     ) {
-      // A rejected write — a bad upload, a failed validation — is otherwise
-      // invisible server-side, and "I submitted but nothing happened" is then
-      // undiagnosable. Route and reason only, never the body.
       this.logger.warn(
         `${request.method} ${request.path} -> ${body.code}: ${JSON.stringify((body as any).message)}`,
       );
@@ -62,7 +52,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const payload = exception.getResponse();
 
-      // ValidationPipe returns `message` as an array — keep every message.
       const message =
         typeof payload === 'object' && Array.isArray((payload as any).message)
           ? (payload as any).message
@@ -108,5 +97,4 @@ function httpStatusLabel(status: number): string {
   }
 }
 
-/** Kept out of the class so ERR stays importable without a circular reference. */
 export const FILTER_ERROR_CODES = ERR;

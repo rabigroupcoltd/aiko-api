@@ -10,11 +10,6 @@ import {
   WORKER_OPTIONS,
 } from '../queues.constants';
 
-/**
- * Drivers report every ~10s. Writing each ping straight to Postgres would be
- * thousands of writes a minute, so Redis absorbs them and this job flushes the
- * latest position per driver on an interval.
- */
 @Processor(QUEUE_DRIVER_LOCATION, WORKER_OPTIONS)
 export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(DriverLocationWorker.name);
@@ -29,8 +24,6 @@ export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
 
   async onModuleInit() {
     try {
-      // A fixed jobId keeps repeat registrations idempotent across restarts
-      // and across instances.
       await this.queue.add(
         JOB_FLUSH_LOCATIONS,
         {},
@@ -49,8 +42,6 @@ export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
     const tracked = await this.redis.getAllTrackedDrivers();
     if (tracked.length === 0) return { flushed: 0 };
 
-    // The vehicle type comes back with the id, so each read hits one partition
-    // rather than probing every one of them.
     const locations = await Promise.all(
       tracked.map(({ driverId, vehicleType }) =>
         this.redis.getDriverLocation(driverId, vehicleType),
@@ -62,8 +53,6 @@ export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
         location != null && location.lat != null && location.lng != null,
     );
 
-    // Drivers deleted between the Redis read and this write would break a
-    // batch insert, so each upsert stands on its own.
     const results = await Promise.allSettled(
       writable.map((location) =>
         this.prisma.driverLocation.upsert({

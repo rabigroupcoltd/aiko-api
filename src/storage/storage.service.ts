@@ -6,13 +6,6 @@ import { R2StorageProvider } from './providers/r2.provider';
 import { S3StorageProvider } from './providers/s3.provider';
 import { IStorageProvider, StorageUploadResult, UploadFile, UploadOptions } from './storage.types';
 
-/**
- * Facade over the four storage backends. Swap with STORAGE_PROVIDER in .env —
- * callers never reference a concrete provider.
- *
- * Deletes route by the provider recorded on the row at upload time, so objects
- * written before a swap stay deletable.
- */
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
@@ -55,7 +48,6 @@ export class StorageService implements OnModuleInit {
     return Promise.all(files.map((file) => this.upload(file, options)));
   }
 
-  /** Never throws — a dangling object must not block deleting its DB row. */
   async delete(key: string, provider: StorageProvider): Promise<void> {
     try {
       await this.registry[provider].delete(key);

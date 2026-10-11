@@ -7,37 +7,21 @@ export type RideEventName =
   | 'order.status-changed'
   | 'order.cancelled'
   | 'order.message'
-  /** The other party opened the chat; their unread messages are now read. */
   | 'order.messages-read'
   | 'order.rated'
-  /** A marketplace order is open and should appear in these drivers' grids. */
   | 'order.available'
-  /** A driver won it — every other driver's grid must drop it. */
   | 'order.reserved'
-  /** The driver physically collected it. */
   | 'order.picked-up'
-  /** That one order is finished; the driver's others are untouched. */
   | 'order.delivered'
-  /** The search widened as far as it could and nobody took it. */
   | 'order.no-driver-found'
   | 'ride-request.created'
   | 'ride-request.bid'
   | 'ride-request.bid-accepted'
   | 'ride-request.cancelled'
   | 'ride-request.expired'
-  /** A driver went online, or moved while online — triggers the backfill sweep. */
   | 'driver.available'
-  /**
-   * A driver published a position, over either transport.
-   *
-   * Exists because a backgrounded driver has no socket: their fixes arrive by
-   * REST, and without this the passenger's map would freeze the moment the
-   * driver's phone locked.
-   */
   | 'driver.location'
-  /** An admin cleared or rejected a driver's documents. */
   | 'driver.kyc-updated'
-  /** The watchdog found a driver silent while holding active orders. */
   | 'driver.went-dark';
 
 export interface RideEvent<T = any> {
@@ -45,11 +29,6 @@ export interface RideEvent<T = any> {
   payload: T;
 }
 
-/**
- * In-process event bus decoupling HTTP services from the WebSocket gateway:
- * services publish, the gateway subscribes and fans out to Socket.IO rooms.
- * Cross-instance delivery is handled by the Redis Streams adapter, not here.
- */
 @Injectable()
 export class RideEventsService {
   private readonly subject = new Subject<RideEvent>();

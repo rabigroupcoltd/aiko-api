@@ -2,14 +2,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsLatitude, IsLongitude, IsNumber, IsOptional, Max, Min } from 'class-validator';
 
-/**
- * Query for the driver's available-orders grid.
- *
- * Position is optional: the server already tracks the driver through the
- * location heartbeat, and a client that has a fresher fix may pass it. Radius
- * and limit are bounded here so a client cannot ask the server to scan the
- * whole country.
- */
 export class MarketplaceQueryDto {
   @ApiPropertyOptional({ example: 9.6139, description: "The driver's current latitude." })
   @IsOptional()

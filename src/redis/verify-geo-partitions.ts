@@ -1,16 +1,3 @@
-/**
- * Checks that the driver presence index is really partitioned by vehicle type.
- *
- * The claim being tested is that a search for one vehicle never reads another
- * vehicle's drivers — which is both the correctness property (a keke order must
- * not match an okada) and the performance one (the radius query walks half the
- * fleet instead of all of it).
- *
- * Talks to Redis only. Point it at a throwaway instance, or accept that it
- * writes and deletes a handful of `drivers:*` keys:
- *
- *   REDIS_URL=redis://localhost:6379 npm run verify:geo
- */
 import { VehicleType } from '@prisma/client';
 import Redis from 'ioredis';
 import { RedisService } from './redis.service';
@@ -21,7 +8,6 @@ const redis = new RedisService(client);
 
 const MINNA = { lat: 9.6139, lng: 6.5569 };
 
-/** Roughly 1 km north per 0.009 degrees of latitude. */
 const near = (km: number) => ({ lat: MINNA.lat + km * 0.009, lng: MINNA.lng });
 
 const IDS = {
@@ -50,7 +36,6 @@ async function main() {
 
   await cleanup();
 
-  // ------------------------------------------------------ writes land apart
   console.log('\n=== a position is written to its own vehicle partition ===');
 
   await redis.saveDriverLocation(IDS.okadaNear, VehicleType.BIKE, near(1));
@@ -71,7 +56,6 @@ async function main() {
   }
   if (failures === 0) console.log('  PASS');
 
-  // ------------------------------------------------- a search sees one type
   console.log('\n=== a typed search reads only its own partition ===');
 
   Object.values(IDS).forEach(() => undefined);
@@ -93,7 +77,6 @@ async function main() {
   console.log(`  TRICYCLE within 5 km -> ${kekes.map((d) => d.driverId).join(', ') || 'none'}`);
 
   const before = failures;
-  // The far okada is 20 km out and must be excluded by the radius, not the type.
   if (bikes.length !== 1 || bikes[0].driverId !== IDS.okadaNear) {
     fail('the bike search did not return exactly the near bike');
   }
@@ -102,7 +85,6 @@ async function main() {
   }
   if (failures === before) console.log('  PASS');
 
-  // -------------------------------------------- changing vehicle type moves
   console.log('\n=== re-registering under another vehicle leaves no ghost ===');
 
   await redis.saveDriverLocation(IDS.okadaNear, VehicleType.TRICYCLE, near(1));
@@ -121,7 +103,6 @@ async function main() {
     console.log('  PASS');
   }
 
-  // ------------------------------------------------- teardown clears it all
   console.log('\n=== removeDriver clears every partition ===');
 
   await redis.removeDriver(IDS.okadaNear);
@@ -136,7 +117,6 @@ async function main() {
   if (stillSomewhere.length > 0) fail('teardown left the driver in an index');
   else console.log('  PASS');
 
-  // ------------------------------------------------- the flush job sees all
   console.log('\n=== the flush job enumerates every partition ===');
 
   const tracked = await redis.getAllTrackedDrivers();

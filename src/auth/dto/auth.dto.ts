@@ -1,13 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsString, MinLength } from 'class-validator';
 
-/**
- * The only credential the app ever sends.
- *
- * One token type covers both ways in, because Firebase mints the same kind of
- * ID token for a Google sign-in and for a verified phone number — the claims
- * differ, not the format. That is what keeps this to a single endpoint.
- */
 export class FirebaseSignInDto {
   @ApiProperty({
     example:
@@ -20,7 +13,6 @@ export class FirebaseSignInDto {
   idToken: string;
 }
 
-/** Staff sign-in. App users have no password and can never satisfy this. */
 export class LoginDto {
   @ApiProperty({ example: 'admin@aiko.ng' })
   @IsEmail()

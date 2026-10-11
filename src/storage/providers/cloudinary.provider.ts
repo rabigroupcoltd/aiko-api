@@ -38,7 +38,6 @@ export class CloudinaryStorageProvider implements IStorageProvider {
     });
 
     return {
-      // public_id is what delete() needs — the URL alone is not enough.
       url: result.secure_url,
       key: result.public_id,
       provider: this.name,

@@ -10,27 +10,16 @@ export interface Point {
 
 export interface RoadDistance {
   distanceKm: number;
-  /** Whether this came from Google or the haversine fallback — surfaced for debugging, never billed on. */
   source: 'google' | 'estimate';
 }
 
 const CACHE_TTL_MS = 10 * 60_000;
 
-/**
- * Real road distance for the fare quote, backed by Google's Distance Matrix API.
- *
- * Falls back to the haversine estimate (same one route.util.ts still uses for
- * multi-stop dispatch planning) whenever the key is missing or the call fails,
- * so a quote never hard-fails over a Google outage — it just gets a little
- * less precise for that one request.
- */
 @Injectable()
 export class DistanceService {
   private readonly logger = new Logger(DistanceService.name);
   private readonly endpoint = 'https://maps.googleapis.com/maps/api/distancematrix/json';
 
-  // Same pickup/dropoff pair gets requoted a lot (re-opening the ride picker,
-  // switching vehicle type) — this saves a paid Google call each time.
   private readonly cache = new Map<string, { value: RoadDistance; expiresAt: number }>();
 
   constructor(private settings: PlatformSettingsService) {}
@@ -94,7 +83,6 @@ export class DistanceService {
   }
 }
 
-/** Rounded to ~11m so the same route hits the same cache entry despite float noise. */
 function cacheKey(origin: Point, destination: Point): string {
   const r = (n: number) => n.toFixed(4);
   return `${r(origin.lat)},${r(origin.lng)}->${r(destination.lat)},${r(destination.lng)}`;

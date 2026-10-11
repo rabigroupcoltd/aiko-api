@@ -67,13 +67,6 @@ export class CreateRideRequestDto {
   radiusKm?: number;
 }
 
-/**
- * A driver asking what work is open around them.
- *
- * The position is supplied rather than read from the driver's last heartbeat so
- * the answer matches where they are *now* — a driver opening the app after a
- * break would otherwise be shown jobs around wherever they last parked.
- */
 export class NearbyRequestsQueryDto {
   @ApiProperty({ example: 9.6139, description: 'The driver’s current latitude.' })
   @Type(() => Number)
@@ -154,9 +147,6 @@ export class CancelRideRequestDto {
   reason?: string;
 }
 
-// ------------------------------------------------- websocket-only payloads
-// Sent over the `ws://<host>/ride` gateway rather than any REST route.
-
 export class SubscribeDriverLocationDto {
   @ApiProperty({ format: 'uuid', example: 'd41c8b02-5e77-4a19-9c3b-6a2f8e0d4b55' })
   @IsUUID()
@@ -214,7 +204,6 @@ export class SubmitRatingDto {
   comment?: string;
 }
 
-/** Addresses one marketplace order — reserve, skip. */
 export class OrderIdDto {
   @ApiProperty({ format: 'uuid', example: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33' })
   @IsUUID()

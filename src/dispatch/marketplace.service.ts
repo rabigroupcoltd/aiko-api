@@ -29,11 +29,9 @@ import { CompatibilityResult, OrderCompatibilityService } from './order-compatib
 import { RouteOptimizerService } from './route-optimizer.service';
 import { Point, RoutableOrder, bestRouteLengthKm, stopsFor } from './route.util';
 
-/** What a driver sees before they have committed to anything. */
 export interface MarketplaceCard {
   id: string;
   vehicleType: string;
-  /** What the passenger is sending. Null on orders raised before the field existed. */
   description: string | null;
   pickupLocation: string;
   pickupLat: number;
@@ -43,7 +41,6 @@ export interface MarketplaceCard {
   dropoffLng: number;
   distanceKm: number;
   durationMins: number;
-  /** What the driver keeps, not what the customer pays. */
   earnings: number;
   fare: number;
   currency: string;
@@ -57,15 +54,6 @@ const ACTIVE_ORDER_INCLUDE = {
   user: { select: CONTACT_USER_SELECT },
 } satisfies Prisma.OrderInclude;
 
-/**
- * The driver-facing half of the marketplace: browse, reserve, skip, and the
- * route across everything currently held.
- *
- * The database is the source of truth throughout. Nothing here trusts a
- * client-supplied price, driver id, order ownership or capacity count — §46 —
- * and the one operation that can race is settled by a conditional UPDATE rather
- * than a read-then-write.
- */
 @Injectable()
 export class MarketplaceService {
   private readonly logger = new Logger(MarketplaceService.name);
@@ -79,16 +67,6 @@ export class MarketplaceService {
     private response: ResponsesService,
   ) {}
 
-  // --------------------------------------------------------------- browsing
-
-  /**
-   * Open orders around the driver, best fit first.
-   *
-   * Ranking is §17 in order of precedence: orders the engine rejected sink below
-   * every order it accepted, and within each group the composite route score
-   * decides — which already folds in pickup proximity, detour and the delay to
-   * customers the driver has already taken on.
-   */
   async available(userId: string, query: MarketplaceQueryDto): Promise<ServiceResult> {
     try {
       const gate = await this.requireWorkingDriver(userId);
@@ -103,8 +81,6 @@ export class MarketplaceService {
 
       const currentOrders = await this.routes.activeOrders(driver.id);
 
-      // At capacity the grid is empty by definition, and saying so is more use
-      // to the driver than an unexplained blank screen.
       if (currentOrders.length >= MAX_RESERVED_ORDERS_PER_DRIVER) {
         return ok({
           orders: [],
@@ -119,8 +95,6 @@ export class MarketplaceService {
 
       const candidates = await this.openOrdersNear(driver, origin, radiusKm, limit);
 
-      // Hoisted: every candidate is measured against the same baseline route and
-      // the same planning speed, so neither is recomputed per order.
       const speedKph = await this.routes.speedFor(driver.vehicleType);
       const baselineKm = bestRouteLengthKm(
         origin,
@@ -156,24 +130,6 @@ export class MarketplaceService {
     }
   }
 
-  // -------------------------------------------------------------- reserving
-
-  /**
-   * Claim an order.
-   *
-   * Two invariants, enforced in the only place that can enforce them:
-   *
-   * ONE ORDER → ONE DRIVER is the conditional UPDATE. Postgres takes a row lock
-   * on the matched order; a second driver arriving mid-flight blocks, then
-   * re-evaluates `status = SEARCHING_FOR_DRIVER AND driverId IS NULL` against the
-   * committed row and matches nothing. `count === 0` is the loser, every time.
-   * There is no read-then-write window for two winners to slip through.
-   *
-   * ONE DRIVER → AT MOST N ORDERS is the `SELECT … FOR UPDATE` on the driver row.
-   * Two orders claimed by the same driver at the same instant lock different
-   * order rows, so the first invariant says nothing about them — the driver row
-   * is the shared object, and holding it makes the count-then-claim atomic.
-   */
   async reserve(orderId: string, userId: string): Promise<ServiceResult> {
     try {
       const gate = await this.requireWorkingDriver(userId);
@@ -199,11 +155,6 @@ export class MarketplaceService {
 
       const currentOrders = await this.routes.activeOrders(driver.id);
 
-      /**
-       * Checked here rather than trusted from the grid the driver was looking
-       * at: that grid may be seconds old, and the route it was scored against
-       * may have changed when they accepted something else in between.
-       */
       const compatibility = await this.compatibility.evaluate({
         driverId: driver.id,
         vehicleType: driver.vehicleType,
@@ -234,8 +185,6 @@ export class MarketplaceService {
 
       const eta = reserved ? await this.routes.customerEta(reserved) : null;
 
-      // One event, three consumers: the customer's socket, the customer's push,
-      // and every other driver's grid — which must drop this card immediately.
       this.events.emit('order.reserved', {
         order: reserved,
         driverId: driver.id,
@@ -254,16 +203,8 @@ export class MarketplaceService {
     }
   }
 
-  /**
-   * The atomic core of a reservation. Returns which invariant, if any, stopped it.
-   *
-   * Everything inside runs in one transaction so the capacity count, the claim
-   * and the audit row either all land or none do.
-   */
   private async claim(orderId: string, driverId: string): Promise<'OK' | 'TAKEN' | 'CAPACITY'> {
     return this.prisma.$transaction(async (tx) => {
-      // Serialises this driver's own concurrent accepts. Nothing else in the
-      // codebase locks a driver row, so this cannot deadlock against a peer.
       await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${driverId} FOR UPDATE`;
 
       const held = await tx.order.count({
@@ -279,8 +220,6 @@ export class MarketplaceService {
           driverId,
           status: OrderStatus.RESERVED,
           reservedAt: now,
-          // Kept in step so everything that already reads acceptance — analytics,
-          // the admin dashboard, the driver's acceptance rate — still works.
           acceptedAt: now,
         },
       });
@@ -302,12 +241,6 @@ export class MarketplaceService {
     });
   }
 
-  /**
-   * Take an order out of this driver's grid without touching the order itself.
-   *
-   * A skip is a private preference: the order stays SEARCHING_FOR_DRIVER and
-   * every other driver still sees it.
-   */
   async skip(orderId: string, userId: string): Promise<ServiceResult> {
     try {
       const found = await this.drivers.requireDriverForUser(userId);
@@ -338,15 +271,6 @@ export class MarketplaceService {
     }
   }
 
-  // ----------------------------------------------------------- active orders
-
-  /**
-   * Everything the driver is currently holding, plus the route across all of it.
-   *
-   * Each order keeps its own status, customer, price and contact details — §45.
-   * The route is the only thing that treats them as a group, and it is derived,
-   * not stored.
-   */
   async activeOrders(userId: string): Promise<ServiceResult> {
     try {
       const found = await this.drivers.requireDriverForUser(userId);
@@ -378,10 +302,7 @@ export class MarketplaceService {
     }
   }
 
-  /** OFFLINE / AVAILABLE / BUSY — §26, derived rather than stored. */
   async dispatchStatus(driver: Driver, heldCount?: number): Promise<DispatchStatus> {
-    // Short-circuit before querying: a driver who is offline, blocked or
-    // unapproved is OFFLINE whatever they are holding.
     if (!driver.isAvailable || driver.isBlocked || driver.kycStatus !== KycStatus.APPROVED) {
       return 'OFFLINE';
     }
@@ -392,8 +313,6 @@ export class MarketplaceService {
         where: { driverId: driver.id, status: { in: DRIVER_ACTIVE_STATUSES } },
       }));
 
-    // Only reached when the driver is otherwise eligible, so the legacy count
-    // is the one remaining question.
     const legacy =
       held >= MAX_RESERVED_ORDERS_PER_DRIVER
         ? 0
@@ -411,7 +330,6 @@ export class MarketplaceService {
     });
   }
 
-  /** Orders this driver skipped, for the history tab. */
   async skipped(userId: string, limit = 50): Promise<ServiceResult> {
     try {
       const found = await this.drivers.requireDriverForUser(userId);
@@ -432,9 +350,6 @@ export class MarketplaceService {
     }
   }
 
-  // ---------------------------------------------------------------- helpers
-
-  /** A driver who is allowed to be offered work at all. */
   private async requireWorkingDriver(userId: string): Promise<ServiceResult<Driver | string>> {
     const found = await this.drivers.requireDriverForUser(userId);
     if (found.error) return found;
@@ -448,24 +363,11 @@ export class MarketplaceService {
     return ok(driver);
   }
 
-  /**
-   * The driver's position for this request.
-   *
-   * A client-supplied fix is preferred when present — it is fresher than
-   * anything the server has — but it is only ever used to place the driver, and
-   * never to decide what they are allowed to do.
-   */
   private async resolveOrigin(driver: Driver, query: MarketplaceQueryDto): Promise<Point | null> {
     if (query.lat != null && query.lng != null) return { lat: query.lat, lng: query.lng };
     return this.routes.driverPosition(driver.id, driver.vehicleType);
   }
 
-  /**
-   * Unclaimed orders whose pickup falls inside the radius.
-   *
-   * The bounding box narrows the read; haversine trims the corners it adds.
-   * Orders this driver skipped never enter the set, and neither do their own.
-   */
   private async openOrdersNear(
     driver: Driver,
     origin: Point,
@@ -492,8 +394,6 @@ export class MarketplaceService {
         },
       },
       orderBy: { createdAt: 'asc' },
-      // The box over-selects and the haversine pass can only shrink the list, so
-      // this is bounded independently of `limit`.
       take: Math.max(limit * 4, 40),
     });
 
@@ -502,12 +402,6 @@ export class MarketplaceService {
     );
   }
 
-  /**
-   * An open order as a driver may see it.
-   *
-   * §9: nothing identifying the customer. No name, no phone, no user id — those
-   * arrive with the reservation, once this driver is the one handling it.
-   */
   private toCard(order: Order, compatibility: CompatibilityResult): MarketplaceCard {
     return {
       id: order.id,
@@ -544,13 +438,6 @@ const SKIPPED_ORDER_SELECT = {
   createdAt: true,
 } satisfies Prisma.OrderSelect;
 
-/**
- * Compatible before incompatible, then best score, then closest pickup.
- *
- * The first key is what makes §38 work: a ₦3,500 order with a 6.8 km detour
- * sorts below a ₦2,000 one with 1.4 km, because the driver's take-home is the
- * fare minus the fuel to reach it — and the score already knows that.
- */
 function rankCards(a: MarketplaceCard, b: MarketplaceCard): number {
   if (a.compatibility.compatible !== b.compatibility.compatible) {
     return a.compatibility.compatible ? -1 : 1;

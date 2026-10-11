@@ -20,7 +20,6 @@ async function bootstrap() {
       whitelist: true,
       transform: true,
       forbidNonWhitelisted: true,
-      // Flatten constraint messages so the envelope carries one readable string.
       exceptionFactory: (errors) => {
         const messages = errors
           .map((error) => Object.values(error.constraints || {}))
@@ -31,30 +30,17 @@ async function bootstrap() {
     }),
   );
 
-  // Syncs the HTTP status line to the `code` in the body.
   app.useGlobalInterceptors(new StatusInterceptor());
 
-  // Catches anything that escapes a controller's own try/catch — guards, pipes,
-  // and unexpected throws — so every response uses the same envelope.
   app.useGlobalFilters(new AllExceptionsFilter(app.get(ResponsesService)));
 
   app.enableCors({ origin: process.env.CORS_ORIGIN?.split(',') ?? '*' });
   app.enableShutdownHooks();
 
-  // Mounted after the global prefix so every documented path already carries it.
   setupSwagger(app);
 
-  // Serves uploads written by the LOCAL storage provider. Harmless when a
-  // cloud provider is active — the directory simply stays empty.
   app.useStaticAssets(resolve(process.env.UPLOAD_DIR || './uploads'), { prefix: '/uploads/' });
 
-  // Fan WebSocket events out through Redis so multiple instances stay in sync.
-  //
-  // Off by default. The adapter exists so a client connected to instance A
-  // receives an event raised on instance B, which is worth nothing while there
-  // is one instance — and it is not free: it holds a second Redis connection
-  // blocking on XREAD in a permanent loop, whether or not anything is
-  // broadcast. Turn it on in the same breath as the second instance.
   if (process.env.SOCKET_REDIS_ADAPTER === 'true') {
     const redisIoAdapter = new RedisIoAdapter(app);
     await redisIoAdapter.connectToRedis();

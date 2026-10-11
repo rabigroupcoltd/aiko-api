@@ -13,22 +13,12 @@ import {
   UpdateTicketDto,
 } from './dto/support.dto';
 
-/** The requester's own view of a ticket, and the list row the queue renders. */
 const TICKET_INCLUDE = {
   requester: { select: CONTACT_USER_SELECT },
   assignee: { select: PUBLIC_USER_SELECT },
   _count: { select: { messages: true } },
 } satisfies Prisma.SupportTicketInclude;
 
-/**
- * Support tickets.
- *
- * Two audiences share one service. A customer or driver raises a ticket and
- * sees their own; an admin sees the queue. The split is enforced per method
- * rather than by separate controllers, because the underlying reads are the
- * same query with one extra `where` clause — duplicating them would be the more
- * likely place for the scoping to drift.
- */
 @Injectable()
 export class SupportService {
   constructor(
@@ -37,12 +27,8 @@ export class SupportService {
     private response: ResponsesService,
   ) {}
 
-  // ------------------------------------------------------------- requester
-
   async create(userId: string, dto: CreateTicketDto): Promise<ServiceResult> {
     try {
-      // Attaching an order to somebody else's ticket would leak its addresses
-      // and fare into a thread they control.
       if (dto.orderId) {
         const order = await this.prisma.order.findUnique({
           where: { id: dto.orderId },
@@ -74,15 +60,6 @@ export class SupportService {
     }
   }
 
-  /**
-   * A short, quotable reference.
-   *
-   * `AIK-1042` reads out over a phone call; a uuid does not, and support is
-   * conducted over the phone more often than through the app. Derived from the
-   * row count rather than a database sequence to avoid a second migration for
-   * one cosmetic column — the collision window is one concurrent insert, which
-   * the unique constraint catches and the retry below resolves.
-   */
   private async nextReference(): Promise<string> {
     const count = await this.prisma.supportTicket.count();
     const candidate = `AIK-${1000 + count + 1}`;
@@ -95,7 +72,6 @@ export class SupportService {
     return taken ? `AIK-${1000 + count + 1}-${Date.now().toString(36).slice(-3)}` : candidate;
   }
 
-  /** The caller's own tickets. */
   async mine(userId: string): Promise<ServiceResult> {
     try {
       return ok(
@@ -110,15 +86,6 @@ export class SupportService {
     }
   }
 
-  // ------------------------------------------------------------------ admin
-
-  /**
-   * The queue.
-   *
-   * Returns status counts alongside the page, because the tabs above the table
-   * need them and asking for them separately would mean two round trips for one
-   * screen that always shows both.
-   */
   async list(query: SupportQueryDto): Promise<ServiceResult> {
     try {
       const page = query.page ?? 1;
@@ -168,13 +135,6 @@ export class SupportService {
     }
   }
 
-  /**
-   * One ticket with its thread.
-   *
-   * Internal notes are stripped for the requester. Filtered in the query rather
-   * than after it, so a staff-only note cannot reach a customer through a
-   * serialisation mistake further down.
-   */
   async detail(id: string, user: JwtUser): Promise<ServiceResult> {
     try {
       const isStaff = Boolean(user.roles?.some((role) => role === 'ADMIN' || role === 'SUPPORT'));
@@ -212,7 +172,6 @@ export class SupportService {
     }
   }
 
-  /** Post a message. Either party; `internal` is refused for non-staff. */
   async reply(id: string, user: JwtUser, dto: ReplyTicketDto): Promise<ServiceResult> {
     try {
       const isStaff = Boolean(user.roles?.some((role) => role === 'ADMIN' || role === 'SUPPORT'));
@@ -241,13 +200,9 @@ export class SupportService {
           where: { id },
           data: {
             lastMessageAt: new Date(),
-            // A customer replying to something marked resolved is reopening it.
-            // An internal note is not: staff talking among themselves should not
-            // drag a closed ticket back into the queue.
             ...(!isStaff && !dto.internal && ticket.status === SupportStatus.RESOLVED
               ? { status: SupportStatus.OPEN, resolvedAt: null }
               : {}),
-            // Staff replying moves it out of OPEN — the ball is with the customer.
             ...(isStaff && !dto.internal && ticket.status === SupportStatus.OPEN
               ? { status: SupportStatus.PENDING }
               : {}),
@@ -261,7 +216,6 @@ export class SupportService {
     }
   }
 
-  /** Assign, reprioritise, or move the status. Admin only. */
   async update(id: string, user: JwtUser, dto: UpdateTicketDto): Promise<ServiceResult> {
     try {
       const existing = await this.prisma.supportTicket.findUnique({
@@ -275,8 +229,6 @@ export class SupportService {
         data: {
           ...(dto.status ? { status: dto.status } : {}),
           ...(dto.priority ? { priority: dto.priority } : {}),
-          // `null` is a real value here — it unassigns — so the key is only
-          // skipped when it was absent from the body entirely.
           ...(dto.assigneeId !== undefined ? { assigneeId: dto.assigneeId } : {}),
           ...(dto.status === SupportStatus.RESOLVED ? { resolvedAt: new Date() } : {}),
           ...(dto.status === SupportStatus.CLOSED ? { closedAt: new Date() } : {}),

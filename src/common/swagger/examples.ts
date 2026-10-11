@@ -1,21 +1,8 @@
-/**
- * Sample payloads shared by the Swagger response decorators.
- *
- * These mirror the shapes the services actually return — Prisma models plus
- * whatever `include`/`select` the query uses — so the documented sample and a
- * real response line up field for field. Keep them in sync when a select or a
- * computed shape changes.
- */
-
-// -------------------------------------------------------------------- ids
-
 const USER_ID = '3f2a7c1e-9b64-4d2a-8f31-1c0d5e6a7b81';
 const DRIVER_ID = 'd41c8b02-5e77-4a19-9c3b-6a2f8e0d4b55';
 const ORDER_ID = '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33';
 const REQUEST_ID = 'b5d9f0a3-7c21-4e88-9a16-2f3b6c8d1e04';
 const WALLET_ID = 'e8a1c503-42b9-4d67-b0f8-93c5a7e2d146';
-
-// ------------------------------------------------------------------ users
 
 export const USER_EXAMPLE = {
   id: USER_ID,
@@ -30,9 +17,6 @@ export const USER_EXAMPLE = {
 const ACCESS_TOKEN =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzZjJhN2MxZS05YjY0LTRkMmEtOGYzMS0xYzBkNWU2YTdiODEiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSIsInJvbGVzIjpbIlVTRVIiXSwiaWF0IjoxNzg1MzE1OTUzLCJleHAiOjE3ODU5MjA3NTN9.7Q0nJk8mVwZ2rC5pXsA1tD9yLbH3fGqE4uNvK6cRxTo';
 
-// ------------------------------------------------------------- onboarding
-
-/** Mid-onboarding: profile is saved, the selfie is not. */
 export const ONBOARDING_STATE_EXAMPLE = {
   resumeStep: 'PHOTO',
   recordedStep: 'PHOTO',
@@ -54,7 +38,6 @@ export const ONBOARDING_STATE_EXAMPLE = {
   },
 };
 
-/** Everything cleared — the client sends the user to the dashboard. */
 export const ONBOARDING_STATE_DONE_EXAMPLE = {
   resumeStep: 'DONE',
   recordedStep: 'DONE',
@@ -76,7 +59,6 @@ export const ONBOARDING_STATE_DONE_EXAMPLE = {
   },
 };
 
-/** A rider who picked their role but has not registered a vehicle yet. */
 export const ONBOARDING_STATE_RIDER_DOCS_EXAMPLE = {
   resumeStep: 'RIDER_DOCS',
   recordedStep: 'USER_TYPE',
@@ -85,7 +67,6 @@ export const ONBOARDING_STATE_RIDER_DOCS_EXAMPLE = {
   completed: false,
   completedAt: null,
   accountType: 'RIDER',
-  // Shared steps are behind them, so they can already book trips as a passenger.
   passengerReady: true,
   driver: { status: 'NOT_SUBMITTED', driverId: null, rejectionReason: null },
   requirements: {
@@ -99,10 +80,6 @@ export const ONBOARDING_STATE_RIDER_DOCS_EXAMPLE = {
   },
 };
 
-/**
- * Vehicle registered, sitting on the waiting screen until an admin clears the
- * KYC. `passengerReady` is true throughout — the app must not lock them out.
- */
 export const ONBOARDING_STATE_AWAITING_APPROVAL_EXAMPLE = {
   resumeStep: 'AWAITING_APPROVAL',
   recordedStep: 'AWAITING_APPROVAL',
@@ -128,7 +105,6 @@ export const ONBOARDING_STATE_AWAITING_APPROVAL_EXAMPLE = {
   },
 };
 
-/** Rejected KYC — back to the document step, with the reason to show them. */
 export const ONBOARDING_STATE_REJECTED_EXAMPLE = {
   resumeStep: 'RIDER_DOCS',
   recordedStep: 'RIDER_DOCS',
@@ -154,7 +130,6 @@ export const ONBOARDING_STATE_REJECTED_EXAMPLE = {
   },
 };
 
-/** An approved rider. Still a passenger — note both roles. */
 export const ONBOARDING_STATE_RIDER_DONE_EXAMPLE = {
   resumeStep: 'DONE',
   recordedStep: 'DONE',
@@ -180,9 +155,6 @@ export const ONBOARDING_STATE_RIDER_DONE_EXAMPLE = {
   },
 };
 
-// ------------------------------------------------------------------- auth
-
-/** A user who has already finished setup — the "straight to dashboard" case. */
 export const FIREBASE_SESSION_RETURNING_EXAMPLE = {
   isNewUser: false,
   accessToken: ACCESS_TOKEN,
@@ -206,10 +178,6 @@ export const FIREBASE_SESSION_RETURNING_EXAMPLE = {
   onboarding: ONBOARDING_STATE_DONE_EXAMPLE,
 };
 
-/**
- * First sign-in through phone auth: the number is already verified, so PHONE is
- * behind them and the app opens on the profile form.
- */
 export const FIREBASE_SESSION_NEW_EXAMPLE = {
   isNewUser: true,
   accessToken: ACCESS_TOKEN,
@@ -258,7 +226,6 @@ export const FIREBASE_SESSION_NEW_EXAMPLE = {
   },
 };
 
-/** Password sign-in, which only staff accounts can satisfy. */
 export const ADMIN_SESSION_EXAMPLE = {
   accessToken: ACCESS_TOKEN,
   user: {
@@ -276,14 +243,11 @@ export const ADMIN_SESSION_EXAMPLE = {
   onboarding: { ...ONBOARDING_STATE_DONE_EXAMPLE, accountType: null },
 };
 
-/** `GET /api/auth/profile` — public user columns, driver profile, onboarding. */
 export const PROFILE_EXAMPLE = {
   ...USER_EXAMPLE,
   driver: null,
   onboarding: ONBOARDING_STATE_DONE_EXAMPLE,
 };
-
-// -------------------------------------------------------- vehicle photos
 
 export const VEHICLE_PHOTO_EXAMPLE = {
   id: '7b3d1f95-0c48-4e2a-a761-5d9b8c3e0a27',
@@ -309,8 +273,6 @@ export const VEHICLE_PHOTOS_EXAMPLE = [
   },
 ];
 
-// ---------------------------------------------------------------- wallet
-
 export const WALLET_EXAMPLE = {
   id: WALLET_ID,
   driverId: DRIVER_ID,
@@ -333,8 +295,6 @@ export const LEDGER_TRANSACTION_EXAMPLE = {
   description: 'Earnings for trip 9c7e2a41',
   createdAt: '2026-07-31T18:55:41.762Z',
 };
-
-// --------------------------------------------------------------- drivers
 
 export const DRIVER_EXAMPLE = {
   id: DRIVER_ID,
@@ -359,7 +319,6 @@ export const DRIVER_EXAMPLE = {
   updatedAt: '2026-07-31T18:55:41.762Z',
 };
 
-/** `GET /api/drivers/:id` and `/me` — the profile with every relation loaded. */
 export const DRIVER_DETAIL_EXAMPLE = {
   ...DRIVER_EXAMPLE,
   user: USER_EXAMPLE,
@@ -381,7 +340,6 @@ export const DRIVER_LIST_EXAMPLE = [
   { ...DRIVER_EXAMPLE, user: USER_EXAMPLE, vehiclePhotos: [VEHICLE_PHOTO_EXAMPLE] },
 ];
 
-/** Live presence from Redis GEOSEARCH — not a database read. */
 export const NEARBY_DRIVERS_EXAMPLE = [
   {
     driverId: DRIVER_ID,
@@ -418,8 +376,6 @@ export const DRIVER_ANALYTICS_EXAMPLE = {
   debtLimit: 10000,
 };
 
-// --------------------------------------------------------------- pricing
-
 export const PRICING_RULE_EXAMPLE = {
   id: '2d6f8a10-4c93-4b7e-85a1-0f3e7c9d2b46',
   vehicleType: 'TRICYCLE',
@@ -451,7 +407,6 @@ export const PRICING_RULES_EXAMPLE = [
   },
 ];
 
-/** The quote object — also what gets frozen into `Order.pricingSnapshot`. */
 export const FARE_QUOTE_EXAMPLE = {
   vehicleType: 'TRICYCLE',
   currency: 'NGN',
@@ -490,9 +445,6 @@ export const FARE_QUOTE_ALL_EXAMPLE = [
   },
 ];
 
-// ---------------------------------------------------------------- orders
-
-/** Only the columns a counterparty may see — see CONTACT_USER_SELECT. */
 const CONTACT_USER_EXAMPLE = {
   id: USER_ID,
   name: 'Ada Obi',
@@ -573,8 +525,6 @@ export const RIDE_RATING_EXAMPLE = {
   createdAt: '2026-08-01T08:14:22.706Z',
 };
 
-// --------------------------------------------------------- ride requests
-
 export const RIDE_REQUEST_EXAMPLE = {
   id: REQUEST_ID,
   userId: USER_ID,
@@ -597,7 +547,6 @@ export const RIDE_REQUEST_EXAMPLE = {
   updatedAt: '2026-08-01T07:57:31.780Z',
 };
 
-/** `POST /api/ride-requests` returns the request, its quote and who was pinged. */
 export const RIDE_REQUEST_CREATED_EXAMPLE = {
   request: RIDE_REQUEST_EXAMPLE,
   quote: FARE_QUOTE_EXAMPLE,
@@ -620,10 +569,6 @@ export const RIDE_REQUEST_WITH_BIDS_EXAMPLE = {
   bids: [RIDE_BID_EXAMPLE],
 };
 
-/**
- * `GET /api/ride-requests/nearby` — open requests around a driver, with how far
- * the pickup is from them and whether they have already bid.
- */
 export const NEARBY_RIDE_REQUESTS_EXAMPLE = [
   {
     ...RIDE_REQUEST_EXAMPLE,
@@ -643,8 +588,6 @@ export const NEARBY_RIDE_REQUESTS_EXAMPLE = [
     hasBid: true,
   },
 ];
-
-// ---------------------------------------------------------- notifications
 
 export const DEVICE_EXAMPLE = {
   id: '7d3b1a90-6c25-4e08-93f1-2b5a8d0c4f76',
@@ -668,8 +611,6 @@ export const DEVICE_LIST_EXAMPLE = [
     lastUsedAt: null,
   },
 ];
-
-// ------------------------------------------------------------- addresses
 
 export const ADDRESS_EXAMPLE = {
   id: 'c8f5b230-91ae-4d67-b024-7a3e6c1d9058',
@@ -698,11 +639,6 @@ export const ADDRESS_LIST_EXAMPLE = [
   },
 ];
 
-/**
- * Search merges three tiers — the caller's saved addresses, the shared place
- * cache, then the Places API. `source` says which tier a row came from and
- * `id` is only set for rows the caller has saved.
- */
 export const ADDRESS_SEARCH_EXAMPLE = {
   results: [
     {
@@ -728,8 +664,6 @@ export const ADDRESS_SEARCH_EXAMPLE = {
   ],
   source: 'cache',
 };
-
-// ------------------------------------------------------------- analytics
 
 export const ANALYTICS_OVERVIEW_EXAMPLE = {
   totalUsers: 1842,
@@ -841,14 +775,10 @@ export const ANALYTICS_LOW_PERFORMERS_EXAMPLE = [
   },
 ];
 
-// --------------------------------------------------------------- storage
-
 export const STORAGE_PROVIDER_EXAMPLE = {
   active: 'LOCAL',
   available: ['LOCAL', 'CLOUDINARY', 'S3', 'CLOUDFLARE_R2'],
 };
-
-// --------------------------------------------------------------- paging
 
 export const TRANSACTION_PAGE_EXAMPLE = {
   totalItems: 128,
@@ -876,15 +806,6 @@ export const WALLET_LIST_EXAMPLE = [
   },
 ];
 
-// ---------------------------------------------------------- marketplace
-
-/**
- * One card in the driver's available-orders grid.
- *
- * Note what is absent: no `userId`, no customer name, no phone numbers. §9 —
- * none of that is needed to decide whether to take the job, and it arrives with
- * the reservation.
- */
 export const MARKETPLACE_CARD_EXAMPLE = {
   id: ORDER_ID,
   vehicleType: 'TRICYCLE',
@@ -948,13 +869,6 @@ export const MARKETPLACE_RESERVED_EXAMPLE = {
   capacity: 3,
 };
 
-/**
- * The driver's route across everything they hold.
- *
- * Note the interleaving — pickup, pickup, drop-off, pickup — and that each order
- * keeps its own status. §19 and §45: the route groups them operationally, the
- * orders stay separate.
- */
 export const MARKETPLACE_ACTIVE_EXAMPLE = {
   orders: [
     {
@@ -1016,8 +930,6 @@ export const ORDER_ETA_EXAMPLE = {
   deliveryMinutes: 24,
   driverHandlingOtherOrders: true,
 };
-
-// ------------------------------------------------------------------- admin
 
 const ADMIN_ID = '7f1c2e93-4a08-4b5d-9e26-3c8f0a1b7d54';
 

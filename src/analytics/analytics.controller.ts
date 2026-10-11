@@ -24,8 +24,6 @@ const LIMIT_QUERY = {
   description: 'Rows to return. Defaults to 10.',
 } as const;
 
-/** Platform-wide figures — admin only. Drivers get their own numbers from
- *  GET /api/drivers/:id/analytics. */
 @ApiTags('Analytics')
 @ApiBearerAuth('bearer')
 @Controller('analytics')

@@ -1,26 +1,10 @@
-/**
- * The `/ride` WebSocket contract, as data.
- *
- * OpenAPI has no concept of a socket event, so this is the single source for
- * both renderings: the markdown reference in the Swagger description, and the
- * `x-websocket` block in the generated JSON that tooling can read.
- *
- * The contract is deliberately small. The socket pushes notifications and takes
- * nothing back — there is no client-to-server table below because there are no
- * client events. Every mutation is REST, and each notification names the REST
- * route a client should call if it wants more than the notification carries.
- */
-
 import { ERROR_CODES, INFO_CODES } from './notification-codes';
 
 export interface NotificationDoc {
   code: string;
   summary: string;
-  /** Who receives it. */
   audience: string;
-  /** Shape of `data`. */
   payload: string;
-  /** What the client should do on receipt. */
   action: string;
   example?: Record<string, unknown>;
 }
@@ -51,13 +35,6 @@ export const WEBSOCKET_ROOMS = [
   },
 ];
 
-/**
- * The driver's card grid, as four codes.
- *
- * A card appears on REQUEST_NEW and leaves on exactly one of the other three.
- * There is no fifth way for a card to go away, and the client is never expected
- * to decide for itself that one is stale.
- */
 export const GRID_NOTIFICATIONS: NotificationDoc[] = [
   {
     code: INFO_CODES.REQUEST_NEW,
@@ -126,7 +103,6 @@ export const GRID_NOTIFICATIONS: NotificationDoc[] = [
   },
 ];
 
-/** Everything that is not the grid — trip progress, chat, position, KYC. */
 export const TRIP_NOTIFICATIONS: NotificationDoc[] = [
   {
     code: INFO_CODES.ORDER_RESERVED,
@@ -224,7 +200,6 @@ export const ERROR_NOTIFICATIONS: NotificationDoc[] = [
   },
 ];
 
-/** The whole contract, for the `x-websocket` block in the OpenAPI JSON. */
 export const WEBSOCKET_CONTRACT = {
   namespace: WEBSOCKET_NAMESPACE,
   transport: 'socket.io',
@@ -246,8 +221,6 @@ export const WEBSOCKET_CONTRACT = {
   errorCodes: ERROR_NOTIFICATIONS,
 };
 
-// ------------------------------------------------------------- rendering
-
 function table(headers: string[], rows: string[][]): string {
   return [
     `| ${headers.join(' | ')} |`,
@@ -256,7 +229,6 @@ function table(headers: string[], rows: string[][]): string {
   ].join('\n');
 }
 
-/** Escapes pipes so a payload containing `A | B` cannot break the table. */
 function cell(value: string): string {
   return value.replace(/\|/g, '\\|');
 }
@@ -270,12 +242,6 @@ function notificationRows(docs: NotificationDoc[]): string[][] {
   ]);
 }
 
-/**
- * Builds the markdown block that goes into the Swagger description.
- *
- * Rendered from the same constants as `x-websocket`, so the human-readable and
- * machine-readable versions cannot drift apart.
- */
 export function renderWebSocketReference(): string {
   const lines: string[] = [];
 

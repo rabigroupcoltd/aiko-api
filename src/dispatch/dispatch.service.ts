@@ -16,48 +16,20 @@ import {
   RADIUS_EXPANSION_FACTOR,
 } from './dispatch.constants';
 
-/** A driver the order should be announced to. */
 export interface DispatchTarget {
   driverId: string;
   distanceKm: number | null;
 }
 
-/**
- * How long we remember having told a driver about an order.
- *
- * An hour — comfortably longer than any order stays open, so within one order's
- * life a driver is notified exactly once no matter how many widening passes and
- * sweeps reach them.
- */
 const ANNOUNCE_MEMORY_SECONDS = 3600;
 const announcedKey = (driverId: string, orderId: string) =>
   `dispatch:announced:${driverId}:${orderId}`;
 
-/**
- * Shortest gap between two marketplace sweeps for one driver.
- *
- * `driver.available` fires on every position heartbeat — up to three a minute.
- * Nothing new can appear that fast which the ordinary fan-out would not already
- * have caught, so sweeping on each one is pure waste.
- */
 const SWEEP_THROTTLE_SECONDS = Number(process.env.DRIVER_SWEEP_THROTTLE || 30);
 const sweepKey = (driverId: string) => `dispatch:sweep:${driverId}`;
 
-/** Most orders one sweep will announce to a single driver. */
 const MAX_SWEEP_ANNOUNCEMENTS = Number(process.env.MAX_SWEEP_ANNOUNCEMENTS || 3);
 
-/**
- * The push half of the marketplace.
- *
- * The grid is a pull — a driver asks what is near them. This is what makes an
- * order appear without that ask (§28): on creation it finds nearby drivers with
- * free capacity and announces the order to them, and when nobody bites it widens
- * the ring on a timer until it runs out of room and gives up.
- *
- * It also closes the other half of the same gap. A driver who comes online after
- * an order was raised was never announced to, so `driver.available` — the event
- * the location heartbeat already publishes — triggers a sweep towards them.
- */
 @Injectable()
 export class DispatchService implements OnModuleInit {
   private readonly logger = new Logger(DispatchService.name);
@@ -71,9 +43,6 @@ export class DispatchService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    // Reuses the announcement DriversService already makes on every location
-    // heartbeat. RideService listens to the same event for the bid flow; the two
-    // sweeps are independent and neither knows about the other.
     this.events.on<any>('driver.available').subscribe(({ payload }) => {
       this.sweepForDriver(payload).catch((e) =>
         this.logger.warn(`Marketplace sweep for ${payload?.driverId} failed: ${e?.message}`),
@@ -81,21 +50,12 @@ export class DispatchService implements OnModuleInit {
     });
   }
 
-  // ---------------------------------------------------------------- dispatch
-
-  /**
-   * Announce a newly created order and arm the widening timer.
-   *
-   * Called once, from OrdersService, the moment the customer confirms.
-   */
   async dispatch(order: Order): Promise<DispatchTarget[]> {
     const radiusKm = order.searchRadiusKm ?? INITIAL_DRIVER_RADIUS_KM;
 
     const targets = await this.eligibleDrivers(order, radiusKm);
     await this.announce(order, targets, radiusKm);
 
-    // Armed whether or not anyone was found: drivers come and go, and the pass
-    // that widens the ring is also the pass that eventually gives up.
     await this.queues.scheduleOrderExpansion(order.id, 1, DISPATCH_EXPAND_DELAY_MS);
 
     this.logger.log(
@@ -105,21 +65,6 @@ export class DispatchService implements OnModuleInit {
     return targets;
   }
 
-  /**
-   * Raises `order.available`, but only for drivers who have not already been
-   * told about this order.
-   *
-   * Without this the same driver is notified repeatedly for one job: the
-   * initial fan-out reaches them, then every widening pass reaches them again
-   * because a wider ring is a superset of a narrower one, and the online sweep
-   * reaches them a third time. On the socket that is merely wasteful; as a push
-   * it is a phone buzzing every forty-five seconds about a job the driver has
-   * already decided not to take.
-   *
-   * `SET NX` in Redis is the record. It is per (driver, order) and expires an
-   * hour later, which is far longer than any order stays open — the key exists
-   * to suppress repeats within one order's life, not to remember anything.
-   */
   private async announce(
     order: Order,
     targets: DispatchTarget[],
@@ -142,10 +87,6 @@ export class DispatchService implements OnModuleInit {
 
     if (fresh.length === 0) return [];
 
-    // Remembered as a set so the losers are addressable when someone wins.
-    // `announcedKey` above already records the same pair, but one key per
-    // (driver, order) cannot be enumerated — and "who else saw this card" is
-    // exactly the question REQUEST_LOST has to answer.
     await this.redis.addOfferedDrivers(
       order.id,
       fresh.map((target) => target.driverId),
@@ -155,12 +96,6 @@ export class DispatchService implements OnModuleInit {
     return fresh;
   }
 
-  /**
-   * One widening pass, run by the worker.
-   *
-   * Returns null once the order is no longer open, which is the worker's signal
-   * to stop rescheduling.
-   */
   async expandSearch(orderId: string, attempt: number): Promise<DispatchTarget[] | null> {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
 
@@ -170,8 +105,6 @@ export class DispatchService implements OnModuleInit {
     const previous = order.searchRadiusKm ?? INITIAL_DRIVER_RADIUS_KM;
     const widened = Math.min(previous * RADIUS_EXPANSION_FACTOR, MAX_DRIVER_RADIUS_KM);
 
-    // Out of attempts, or the ring cannot grow any further — this is as hard as
-    // the platform is willing to look.
     if (attempt > MAX_DISPATCH_ATTEMPTS || previous >= MAX_DRIVER_RADIUS_KM) {
       await this.giveUp(order);
       return null;
@@ -183,7 +116,6 @@ export class DispatchService implements OnModuleInit {
     });
 
     const targets = await this.eligibleDrivers(updated, widened);
-    // Only the drivers the narrower rings did not already reach.
     const fresh = await this.announce(updated, targets, widened);
 
     await this.queues.scheduleOrderExpansion(orderId, attempt + 1, DISPATCH_EXPAND_DELAY_MS);
@@ -196,10 +128,6 @@ export class DispatchService implements OnModuleInit {
     return fresh;
   }
 
-  /**
-   * Nobody took it. Guarded, so an order reserved a moment before the timer
-   * fired is left exactly as it is.
-   */
   private async giveUp(order: Order): Promise<void> {
     const closed = await this.prisma.order.updateMany({
       where: { id: order.id, status: OrderStatus.SEARCHING_FOR_DRIVER, driverId: null },
@@ -214,24 +142,6 @@ export class DispatchService implements OnModuleInit {
     this.logger.warn(`Order ${order.id} closed as NO_DRIVER_FOUND`);
   }
 
-  // ------------------------------------------------------------------ sweep
-
-  /**
-   * Offer a newly-online (or newly-freed) driver whatever is already open near
-   * them, using the same `order.available` event the initial dispatch raises so
-   * both paths reach the socket and push through one code path.
-   *
-   * Throttled hard, because `driver.available` is raised on *every* position
-   * heartbeat — three times a minute in the foreground, and once every twenty
-   * seconds from the background service. Without the throttle this would run a
-   * bounding-box query per driver per heartbeat and fan out a push for each open
-   * order it found, which for a driver parked in a busy area is a phone that
-   * never stops buzzing.
-   *
-   * `SET NX` is the throttle, in Redis rather than in memory so two API
-   * instances cannot both sweep the same driver. Whichever announcement wins
-   * the key does the work; the rest are no-ops until it expires.
-   */
   private async sweepForDriver(payload: {
     driverId: string;
     lat: number;
@@ -263,7 +173,6 @@ export class DispatchService implements OnModuleInit {
         driverId: null,
         vehicleType: driver.vehicleType,
         userId: { not: driver.userId },
-        // Never re-announce something this driver has already dismissed.
         driverActions: { none: { driverId, action: 'SKIPPED' } },
       },
       orderBy: { createdAt: 'desc' },
@@ -275,9 +184,6 @@ export class DispatchService implements OnModuleInit {
         const radius = order.searchRadiusKm ?? INITIAL_DRIVER_RADIUS_KM;
         return haversineKm(lat, lng, order.pickupLat, order.pickupLng) <= radius;
       })
-      // One notification per order, and a driver deciding at a junction can
-      // hold about three of them in their head. The rest are in the grid the
-      // moment they open the app — which the first notification prompts.
       .slice(0, MAX_SWEEP_ANNOUNCEMENTS);
 
     if (within.length === 0) return;
@@ -297,16 +203,6 @@ export class DispatchService implements OnModuleInit {
     }
   }
 
-  // --------------------------------------------------------------- targeting
-
-  /**
-   * Drivers who could actually take this order right now.
-   *
-   * Redis answers "who is near and alive"; Postgres answers "who is approved,
-   * unblocked, online and not already full". A driver at capacity is dropped
-   * here rather than in the grid, so the announcement itself never reaches
-   * someone who cannot act on it.
-   */
   private async eligibleDrivers(order: Order, radiusKm: number): Promise<DispatchTarget[]> {
     const nearby = await this.drivers.nearbyDrivers({
       lat: order.pickupLat,
@@ -320,7 +216,6 @@ export class DispatchService implements OnModuleInit {
 
     const ids = nearby.map((driver) => driver.driverId);
 
-    // One grouped count instead of a query per driver.
     const loads = await this.prisma.order.groupBy({
       by: ['driverId'],
       where: { driverId: { in: ids }, status: { in: DRIVER_ACTIVE_STATUSES } },
@@ -329,7 +224,6 @@ export class DispatchService implements OnModuleInit {
 
     const heldById = new Map(loads.map((row) => [row.driverId!, row._count._all]));
 
-    // A driver must never be offered their own booking.
     const owner = await this.prisma.driver.findUnique({
       where: { userId: order.userId },
       select: { id: true },

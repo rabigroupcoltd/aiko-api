@@ -41,7 +41,6 @@ export class PricingController {
     private response: ResponsesService,
   ) {}
 
-  /** Public so the booking screen can render rate cards before login. */
   @Get()
   @ApiOperation({
     summary: 'List rate cards',
@@ -83,7 +82,6 @@ export class PricingController {
     }
   }
 
-  /** One call, one quote per bookable vehicle type — TRICYCLE vs BICYCLE side by side. */
   @Post('estimate/all')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth('bearer')

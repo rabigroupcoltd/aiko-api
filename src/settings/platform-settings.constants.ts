@@ -1,13 +1,3 @@
-/**
- * Global numeric knobs that used to be env-only constants.
- *
- * Each one is seeded into `PlatformSetting` from its env var (or the literal
- * default below) the first time the app boots, so nothing changes for an
- * existing deployment until an admin actually edits one — see
- * PlatformSettingsService.ensureDefaults.
- *
- * `min` is enforced on every admin edit.
- */
 export const PLATFORM_SETTINGS = {
   FARE_ROUNDING_STEP: {
     label: 'Fare rounding step',

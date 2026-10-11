@@ -40,7 +40,6 @@ export class BlockUserDto {
   reason?: string;
 }
 
-/** The two roles an admin can hand out from the dashboard. Never USER or RIDER — those come from the app's own sign-up flow. */
 export const STAFF_ROLES = ['ADMIN', 'SUPPORT'] as const;
 
 export class CreateStaffDto {
@@ -67,7 +66,6 @@ export class CreateStaffDto {
 export const DIRECTORY_TYPES = ['PASSENGER', 'DRIVER', 'STAFF'] as const;
 export const DRIVER_APPROVAL_FILTERS = ['NOT_SUBMITTED', 'PENDING', 'APPROVED', 'REJECTED'] as const;
 
-/** `GET /users/directory` — the admin's user-management tabs. */
 export class UserDirectoryQueryDto {
   @ApiPropertyOptional({
     enum: DIRECTORY_TYPES,

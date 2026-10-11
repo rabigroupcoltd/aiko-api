@@ -9,10 +9,6 @@ import {
 } from '../queues.constants';
 import { QueuesService } from '../queues.service';
 
-/**
- * Second chance for requests that found no driver. Each attempt widens the
- * radius; after MATCHING_RETRIES the request is left to time out.
- */
 @Processor(QUEUE_RIDE_MATCHING, WORKER_OPTIONS)
 export class RideMatchingWorker extends WorkerHost {
   private readonly logger = new Logger(RideMatchingWorker.name);

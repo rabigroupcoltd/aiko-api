@@ -95,18 +95,12 @@ export class UpdateAddressDto {
 }
 
 export interface AddressSearchResult {
-  /** Present only when the row is one of the caller's saved addresses. */
   id: string | null;
   name: string | null;
   address: string;
   latitude: number | null;
   longitude: number | null;
   placeId: string | null;
-  /**
-   * landmark | market | campus | hospital | transport | government |
-   * residential. Only seeded places carry one — a saved address or a row
-   * written back from the Places API has none, so clients need a fallback icon.
-   */
   category: string | null;
   source: 'SAVED' | 'CACHED' | 'REMOTE';
   isDefault: boolean;

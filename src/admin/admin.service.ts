@@ -10,7 +10,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SUPPORTED_VEHICLE_TYPES } from '../common/vehicle-types';
 import { RedisService } from '../redis/redis.service';
 
-/** Midnight today, in server time. */
 function startOfToday(): Date {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -22,14 +21,6 @@ function daysAgo(days: number): Date {
   return from;
 }
 
-/**
- * The admin dashboard's own reads.
- *
- * Separate from AnalyticsService, which answers "how is the business doing" over
- * a period. This answers "what is happening right now" — the numbers that go
- * stale in minutes and drive the operator's next action, not the ones you put in
- * a monthly report.
- */
 @Injectable()
 export class AdminService {
   constructor(
@@ -38,13 +29,6 @@ export class AdminService {
     private response: ResponsesService,
   ) {}
 
-  /**
-   * The headline tiles.
-   *
-   * One round trip for the whole top of the dashboard. Every count here is
-   * cheap and indexed; the expensive per-driver and per-period breakdowns stay
-   * in AnalyticsService where they are asked for deliberately.
-   */
   async summary(): Promise<ServiceResult> {
     try {
       const today = startOfToday();
@@ -104,8 +88,6 @@ export class AdminService {
         }),
       ]);
 
-      // Presence lives in Redis, not Postgres — `isAvailable` is the shift
-      // switch, which stays true for a driver whose app was killed.
       const online = await this.onlineDriverCount();
 
       return ok({
@@ -138,12 +120,6 @@ export class AdminService {
     }
   }
 
-  /**
-   * How many drivers Redis currently considers reachable.
-   *
-   * Degrades to null rather than throwing: Redis being down should grey out one
-   * tile, not take the whole dashboard with it.
-   */
   private async onlineDriverCount(): Promise<number | null> {
     try {
       const ids = await this.redis.getAvailableDriverIds();
@@ -153,13 +129,6 @@ export class AdminService {
     }
   }
 
-  /**
-   * Orders per day, for the dashboard chart.
-   *
-   * Grouped in application code rather than with a raw `date_trunc`: the range
-   * is a fortnight at most, so the row count is trivial, and keeping it in
-   * Prisma means this does not have to be rewritten if the database moves.
-   */
   async orderTrend(days = 14): Promise<ServiceResult> {
     try {
       const span = Math.min(Math.max(days, 1), 90);
@@ -197,7 +166,6 @@ export class AdminService {
     }
   }
 
-  /** Order split by vehicle type, for the dashboard's donut. */
   async vehicleSplit(): Promise<ServiceResult> {
     try {
       const grouped = await this.prisma.order.groupBy({
@@ -218,14 +186,6 @@ export class AdminService {
     }
   }
 
-  /**
-   * The live activity feed.
-   *
-   * Assembled from the domain tables rather than from the audit log, because
-   * the feed is about what the *platform* did — an order delivered, a driver
-   * signing up — and the audit log only records what an *admin* did. Merging
-   * them would bury real activity under administrative noise.
-   */
   async activity(limit = 20): Promise<ServiceResult> {
     try {
       const take = Math.min(Math.max(limit, 1), 50);
@@ -298,14 +258,6 @@ export class AdminService {
     }
   }
 
-  /**
-   * What the realtime layer is doing.
-   *
-   * Read from Redis and Postgres rather than from the gateway's own memory: the
-   * gateway holds socket handles for the instance it runs on, and the moment
-   * there are two instances that number stops being the answer. Presence and
-   * open orders are shared state and stay correct either way.
-   */
   async socketActivity(): Promise<ServiceResult> {
     try {
       const poolByVehicle: Record<string, number> = {};
@@ -336,10 +288,6 @@ export class AdminService {
         this.prisma.order.count({ where: { status: { in: DRIVER_ACTIVE_STATUSES } } }),
       ]);
 
-      // Who each open order has actually reached. This is the question the
-      // socket-activity screen exists to answer: an order sitting unclaimed is
-      // either being seen by nobody or being ignored by everybody, and the
-      // remedy differs.
       const withReach = await Promise.all(
         openOrders.map(async (order) => ({
           ...order,
@@ -363,7 +311,6 @@ export class AdminService {
   }
 }
 
-/** Signed percentage change, to one decimal place. Null when there is no base. */
 function percentChange(current: number, previous: number): string | null {
   if (previous === 0) return current === 0 ? '0.0' : null;
   return (((current - previous) / previous) * 100).toFixed(1);

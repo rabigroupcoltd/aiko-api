@@ -33,24 +33,6 @@ interface SocketUser extends JwtUser {
   driverId?: string;
 }
 
-/**
- * ws://<host>/ride — a notification pipe, and nothing else.
- *
- * The socket has no client-to-server surface. Every mutation the app performs —
- * booking, reserving, skipping, cancelling, going online, publishing a position
- * — is an HTTP call, and this gateway exists purely to tell a client something
- * changed so it can update what is on screen.
- *
- * That split is what makes recovery trivial. A socket that only pushes holds no
- * in-flight request state, so a reconnect needs no replay: the client calls
- * `GET /api/drivers/state`, gets the whole world back, and carries on. It is
- * also what lets a backgrounded driver keep working — the same events that
- * arrive here arrive as FCM pushes when there is no socket to receive them, and
- * both carry the same codes.
- *
- * Three events go out. `connected` once at handshake, then `info` and `error`
- * forever — see `realtime/notification-codes.ts` for the vocabulary.
- */
 @WebSocketGateway({
   namespace: '/ride',
   cors: { origin: '*' },
@@ -74,16 +56,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     this.logger.log('Ride gateway initialised — notifications only, no client events');
   }
 
-  // ------------------------------------------------------------ driver grid
-
-  /**
-   * The fastest-finger loop, as four codes.
-   *
-   * A card appears on REQUEST_NEW and leaves on exactly one of REQUEST_WON,
-   * REQUEST_LOST or REQUEST_CLOSED. The client needs no other rule: it never
-   * decides for itself that a card is stale, never polls to check, and never
-   * reconciles two sources of truth about whether a job is still open.
-   */
   private wireDriverGrid() {
     this.events.on<any>('order.available').subscribe(({ payload }) => {
       const { order, drivers } = payload;
@@ -101,9 +73,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       const { order, driverId, eta } = payload;
       if (!order) return;
 
-      // The customer learns who is coming, and their sockets start following
-      // that driver's position feed. Joined server-side because the client has
-      // no way to ask — there are no client events.
       this.toUser(
         order.userId,
         info(INFO_CODES.ORDER_RESERVED, 'Driver found', { order, eta: eta ?? null }),
@@ -125,9 +94,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       void this.closeCard(payload.id, REMOVAL_REASONS.NO_DRIVER_FOUND);
     });
 
-    // A cancellation only clears cards while the order was still on the market.
-    // Once a driver holds it, this is a trip being cancelled, and they are told
-    // through ORDER_CANCELLED rather than losing a card they no longer have.
     this.events.on<any>('order.cancelled').subscribe(({ payload }) => {
       if (payload?.id && !payload.driverId) {
         void this.closeCard(payload.id, REMOVAL_REASONS.CANCELLED);
@@ -135,20 +101,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     });
   }
 
-  /**
-   * Tell everyone still holding this card to drop it.
-   *
-   * The audience is read from Redis rather than broadcast to the namespace.
-   * Broadcasting is simpler and is what this did before, but it hands every
-   * connected client a stream of ids belonging to orders they were never shown
-   * — passengers included, who have no grid at all. Reading the offer set
-   * addresses only the drivers who actually saw the card.
-   *
-   * The read is non-destructive. RideNotificationsService answers the same
-   * question to raise the push half of this, and a read that cleared the set
-   * would starve whichever of the two subscribers happened to run second. The
-   * set expires on its own instead — see OFFERED_TTL_SECONDS.
-   */
   private async closeCard(orderId: string, reason: RemovalReason, winnerId?: string) {
     try {
       const offered = await this.redis.getOfferedDrivers(orderId);
@@ -166,14 +118,9 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         this.toDriver(driverId, info(INFO_CODES.REQUEST_LOST, message, { orderId, reason })),
       );
     } catch (e: any) {
-      // A card that fails to clear is a card the driver can tap and be refused
-      // by the reserve endpoint, which is recoverable. Losing the event loop
-      // over it is not.
       this.logger.error(`Could not clear card ${orderId}: ${e?.message}`);
     }
   }
-
-  // ----------------------------------------------------------------- trips
 
   private wireTrips() {
     ['order.created', 'order.accepted', 'order.status-changed'].forEach((name) =>
@@ -194,17 +141,12 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         .emit(SOCKET_EVENTS.INFO, info(INFO_CODES.MESSAGE, 'New message', { message: payload }));
     });
 
-    // Raised by DriversService for both transports, so a driver whose phone is
-    // locked and reporting over REST still moves on the passenger's map.
     this.events.on<any>('driver.location').subscribe(({ payload }) => {
       this.server
         .to(driverWatchRoom(payload.driverId))
         .emit(SOCKET_EVENTS.INFO, info(INFO_CODES.DRIVER_LOCATION, 'Driver moved', payload));
     });
 
-    // Both parties are in the trip room, and the reader ignores its own receipt
-    // by comparing `readerId` — cheaper than excluding one socket server-side
-    // when a driver may have the same order open on two devices.
     this.events.on<any>('order.messages-read').subscribe(({ payload }) => {
       this.server
         .to(rideRoom(payload.orderId))
@@ -225,13 +167,11 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   private broadcastTrip(order: any) {
     if (!order) return;
-    // CANCELLED has its own code; letting it through here would send both.
     if (order.status === OrderStatus.CANCELLED) return;
 
     this.toTrip(order, info(INFO_CODES.ORDER_STATUS, `Order ${order.status}`, { order }));
   }
 
-  /** Both parties of one trip, plus the trip room for anything already joined. */
   private toTrip(order: any, envelope: InfoEnvelope) {
     this.server.to(rideRoom(order.id)).emit(SOCKET_EVENTS.INFO, envelope);
     this.server.to(userRoom(order.userId)).emit(SOCKET_EVENTS.INFO, envelope);
@@ -248,20 +188,11 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     this.server.to(userRoom(userId)).emit(SOCKET_EVENTS.INFO, envelope);
   }
 
-  /** Subscribes one user's sockets to a driver's position feed. */
   private watchDriver(userId: string, driverId?: string) {
     if (!driverId) return;
     this.server.in(userRoom(userId)).socketsJoin(driverWatchRoom(driverId));
   }
 
-  /**
-   * An open order as a driver may see it.
-   *
-   * Redacted like the REST grid — a place and a price, never a customer. No
-   * compatibility score either: that is per-driver and this card goes to many
-   * at once, so the client scores against its own position from the grid it
-   * already holds.
-   */
   private toCard(order: any) {
     return {
       id: order.id,
@@ -280,8 +211,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       createdAt: order.createdAt,
     };
   }
-
-  // ------------------------------------------------------------- lifecycle
 
   async handleConnection(client: Socket) {
     try {
@@ -319,13 +248,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     }
   }
 
-  /**
-   * Re-join the rooms of every trip still in flight.
-   *
-   * This is the whole of reconnect handling. A driver holding three orders
-   * re-joins all three rooms, and a passenger re-joins their driver's position
-   * feed, so a dropped connection needs no special case on the client.
-   */
   private async joinActiveTrips(client: Socket, user: SocketUser) {
     const active = await this.prisma.order.findMany({
       where: {
@@ -346,9 +268,6 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   handleDisconnect(client: Socket) {
     const user: SocketUser | undefined = client.data?.user;
     this.logger.debug(`Socket ${client.id} disconnected (user ${user?.sub ?? 'unknown'})`);
-    // Presence is not cleared here. The heartbeat TTL decides when a driver is
-    // offline, which survives a tunnel, a lock screen, or a brief reconnect —
-    // none of which mean the driver stopped working.
   }
 }
 

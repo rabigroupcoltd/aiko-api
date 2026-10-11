@@ -70,7 +70,6 @@ export class DriversController {
     private response: ResponsesService,
   ) {}
 
-
   @Post('register')
   @UseGuards(AuthGuard('jwt'))
   @UseInterceptors(FilesInterceptor('photos', MAX_VEHICLE_PHOTOS, imageUploadOptions))
@@ -93,11 +92,6 @@ export class DriversController {
   async register(
     @CurrentUser('sub') userId: string,
     @Body() dto: RegisterDriverDto,
-    // `UploadFile`, not `Express.Multer.File`: the latter is an ambient global
-    // that only exists when @types/multer is installed, and those are dev
-    // dependencies — a production install drops them and the build fails here
-    // with "Cannot find namespace 'Express'". Our own interface describes the
-    // exact subset this forwards to the service, so nothing is lost.
     @UploadedFiles(imageFilePipe) photos?: UploadFile[],
   ) {
     try {
@@ -107,8 +101,6 @@ export class DriversController {
       return this.response.exception(e);
     }
   }
-
-  // Static segments must be declared before ':id' or they get captured by it.
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
@@ -129,7 +121,6 @@ export class DriversController {
     }
   }
 
-  /** Live presence lookup backed by Redis GEOSEARCH. */
   @Get('nearby')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth('bearer')
@@ -150,7 +141,6 @@ export class DriversController {
     }
   }
 
-  /** Driver heartbeat — expected roughly every 10s while online. */
   @Post('location')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth('bearer')
@@ -179,8 +169,6 @@ export class DriversController {
       return this.response.exception(e);
     }
   }
-
-  // ------------------------------------------------------- shift lifecycle
 
   @Get('state')
   @UseGuards(AuthGuard('jwt'))
@@ -366,8 +354,6 @@ export class DriversController {
     }
   }
 
-  // ---------------------------------------------------------------- photos
-
   @Get(':id/photos')
   @ApiOperation({ summary: 'List vehicle photos' })
   @ApiParam(DRIVER_ID_PARAM)
@@ -437,8 +423,6 @@ export class DriversController {
       return this.response.exception(e);
     }
   }
-
-  // ------------------------------------------------------------------- kyc
 
   @Patch(':id/kyc/approve')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -526,8 +510,6 @@ export class DriversController {
       return this.response.exception(e);
     }
   }
-
-  // ----------------------------------------------------------------- money
 
   @Get(':id/analytics')
   @UseGuards(AuthGuard('jwt'))

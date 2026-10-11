@@ -6,19 +6,6 @@ import { PUSH_TYPES, OFFER_TTL_SECONDS, TRIP_TTL_SECONDS } from './notifications
 import { RedisService } from '../redis/redis.service';
 import { PushService } from './push.service';
 
-/**
- * Turns ride events into push notifications.
- *
- * Subscribes to the same in-process bus the WebSocket gateway listens on, which
- * is what keeps push out of the services entirely: nothing in RideService or
- * OrdersService knows notifications exist, and a new event only has to be
- * emitted once to reach both transports.
- *
- * Push is the fallback for a client that is backgrounded or off the socket. A
- * client in the foreground gets the socket event too, so the app is expected to
- * suppress a notification it has already acted on — see `dedupeKey` in the data
- * payload, which matches the socket event it duplicates.
- */
 @Injectable()
 export class RideNotificationsService implements OnModuleInit {
   private readonly logger = new Logger(RideNotificationsService.name);
@@ -41,7 +28,6 @@ export class RideNotificationsService implements OnModuleInit {
     this.subscribe('order.message', (payload) => this.onMessage(payload));
     this.subscribe('driver.kyc-updated', (payload) => this.onKycUpdated(payload));
 
-    // Marketplace
     this.subscribe('order.available', (payload) => this.onOrderAvailable(payload));
     this.subscribe('order.reserved', (payload) => this.onOrderReserved(payload));
     this.subscribe('order.picked-up', (payload) => this.onOrderPickedUp(payload));
@@ -49,28 +35,16 @@ export class RideNotificationsService implements OnModuleInit {
     this.subscribe('order.no-driver-found', (payload) => this.onNoDriverFound(payload));
     this.subscribe('driver.went-dark', (payload) => this.onDriverWentDark(payload));
 
-    // The losing half of fastest-finger. Both paths clear the card for every
-    // driver who was offered the order but did not get it.
     this.subscribe('order.reserved', (payload) =>
       this.clearOfferCards(payload?.order?.id, payload?.driverId),
     );
     this.subscribe('order.cancelled', async (payload) => {
-      // Only while it was still on the market. Once a driver holds it, this is
-      // a trip being cancelled and TRIP_CANCELLED already covers them.
       if (payload?.id && !payload.driverId) await this.clearOfferCards(payload.id);
     });
 
     this.logger.log('Ride push notifications wired');
   }
 
-  // ---------------------------------------------------------- marketplace
-
-  /**
-   * A new order, to the drivers within the current ring.
-   *
-   * Redacted the same way the grid is: the notification names a place and a
-   * price, never a customer.
-   */
   private async onOrderAvailable(payload: {
     order: any;
     drivers: { driverId: string }[];
@@ -82,28 +56,11 @@ export class RideNotificationsService implements OnModuleInit {
       drivers.map((driver) => driver.driverId),
       {
         type: PUSH_TYPES.ORDER_AVAILABLE,
-        /**
-         * Data-only, and drawn by the app rather than by Android.
-         *
-         * The tray entry has to be cancellable: another driver takes the order
-         * seconds later and the card left on the phone advertises work that is
-         * gone. Android draws a `notification` block itself and gives the app no
-         * handle to it, so the offer is sent as data and displayed through
-         * Notifee under a known id — which ORDER_REMOVED then cancels.
-         *
-         * Safe here because a driver who is online is running the background
-         * location foreground service, so the process is alive and high-priority
-         * data messages are delivered promptly rather than deferred.
-         */
         silent: true,
-        // One order, one tray entry: the widening passes re-announce the same
-        // order and must replace the earlier card rather than stack on it.
         collapseKey: `order:${order.id}:available`,
         ttlSeconds: OFFER_TTL_SECONDS,
         data: {
           dedupeKey: `order-available:${order.id}`,
-          // The copy the app renders. Carried in data because a silent message
-          // has no notification block to put it in.
           title: `New order · ${money(order.driverEarnings, order.currency)}`,
           body: `${order.pickupLocation} → ${order.dropoffLocation}`,
           orderId: order.id,
@@ -120,21 +77,6 @@ export class RideNotificationsService implements OnModuleInit {
     );
   }
 
-  /**
-   * Tell every driver who lost the race that the card is gone.
-   *
-   * Silent, because nobody wants a buzz to be told they were too slow. The
-   * point is the payload: a backgrounded driver still has the ORDER_AVAILABLE
-   * entry sitting in their tray advertising a job that is no longer available,
-   * and tapping it would open a card the reserve endpoint will refuse. The app
-   * cancels that entry by id on receipt.
-   *
-   * The audience comes from the offer set rather than a fresh radius search —
-   * the ring widens over time, so the drivers who need telling are the union of
-   * every pass, including ones who have since driven out of range. Read without
-   * clearing: RideGateway answers the same question for the socket half, and a
-   * destructive read would starve whichever subscriber ran second.
-   */
   private async clearOfferCards(orderId?: string, winnerId?: string) {
     if (!orderId) return;
 
@@ -145,8 +87,6 @@ export class RideNotificationsService implements OnModuleInit {
     await this.push.sendToDrivers(losers, {
       type: PUSH_TYPES.ORDER_REMOVED,
       silent: true,
-      // Shared with ORDER_AVAILABLE so an offer still queued for an offline
-      // device is replaced by this rather than delivered after the order closed.
       collapseKey: `order:${orderId}:available`,
       ttlSeconds: OFFER_TTL_SECONDS,
       data: {
@@ -157,7 +97,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  /** §23 — the customer's "Driver Found!". */
   private async onOrderReserved(payload: {
     order: any;
     eta?: { pickupMinutes: number | null } | null;
@@ -191,7 +130,6 @@ export class RideNotificationsService implements OnModuleInit {
         driverName: driver?.user?.name,
         vehiclePlate: driver?.vehiclePlate,
         pickupEtaMinutes: pickupMinutes ?? null,
-        // §20: that the driver has other work, never what it is.
         driverHandlingOtherOrders: (payload.heldByDriver ?? 1) > 1,
       },
     });
@@ -208,10 +146,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  /**
-   * One order finished. The driver's other orders are untouched, and the body
-   * says so implicitly by naming only this drop-off.
-   */
   private async onOrderDelivered(order: any) {
     await this.push.sendToUsers([order.userId], {
       type: PUSH_TYPES.ORDER_DELIVERED,
@@ -234,14 +168,6 @@ export class RideNotificationsService implements OnModuleInit {
     }
   }
 
-  /**
-   * The watchdog flagged this driver as gone dark while holding these orders.
-   *
-   * Alert-only for now — no order is touched here. Each rider whose delivery
-   * this driver is carrying is told there's a problem; ops sees the same news
-   * so a human can decide whether to reassign or wait it out. Fired once per
-   * disappearance by DriverWatchdogWorker, not once per watchdog tick.
-   */
   private async onDriverWentDark(payload: {
     driverId: string;
     orders: { id: string; userId: string; pickupLocation: string; dropoffLocation: string }[];
@@ -303,11 +229,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  /**
-   * The bus is synchronous and has no error channel, so a handler that rejected
-   * would surface as an unhandled rejection and take the process down. Every
-   * subscription is wrapped here rather than in each handler.
-   */
   private subscribe(name: Parameters<RideEventsService['on']>[0], handler: (payload: any) => Promise<unknown>) {
     this.events.on<any>(name).subscribe(({ payload }) => {
       handler(payload).catch((e) =>
@@ -316,9 +237,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  // ------------------------------------------------------------- matching
-
-  /** A new job, to the drivers the matcher just picked. */
   private async onRequestCreated(payload: {
     request: any;
     quote: { fare: number; currency?: string };
@@ -335,10 +253,7 @@ export class RideNotificationsService implements OnModuleInit {
         type: PUSH_TYPES.RIDE_REQUEST,
         title: `New ${request.vehicleType.toLowerCase()} trip · ${fare}`,
         body: `${request.pickupLocation} → ${request.dropoffLocation}`,
-        // One offer, one tray entry: a re-broadcast from the rematch worker
-        // replaces the earlier card instead of stacking a second one.
         collapseKey: `request:${request.id}`,
-        // Worthless the moment the request expires.
         ttlSeconds: OFFER_TTL_SECONDS,
         data: {
           dedupeKey: `ride-request:${request.id}`,
@@ -358,7 +273,6 @@ export class RideNotificationsService implements OnModuleInit {
     );
   }
 
-  /** A driver offered to take the trip. */
   private async onBidPlaced(payload: { request: any; bid: any }) {
     const { request, bid } = payload;
     const driverName = bid?.driver?.user?.name ?? 'A driver';
@@ -370,8 +284,6 @@ export class RideNotificationsService implements OnModuleInit {
       body: vehicle
         ? `${driverName} · ${vehicle} · ${money(bid.amount)}`
         : `${driverName} offered ${money(bid.amount)}`,
-      // Several drivers bidding should not bury the passenger — one entry per
-      // request, refreshed as offers come in.
       collapseKey: `request:${request.id}:bids`,
       ttlSeconds: OFFER_TTL_SECONDS,
       data: {
@@ -386,7 +298,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  /** The passenger picked a driver — tell the driver they have the job. */
   private async onBidAccepted(payload: { requestId: string; order: any }) {
     const order = payload?.order;
     if (!order?.driverId) return;
@@ -414,11 +325,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  /**
-   * Silent on purpose. The offer is gone, so the driver's inbox has to drop it
-   * — but buzzing a phone to say "never mind" is the fastest way to get push
-   * turned off entirely.
-   */
   private async onRequestCancelled(request: any) {
     if (!request?.matchedDriverIds?.length) return;
 
@@ -431,7 +337,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  /** Nobody took it inside the TTL. The passenger is the one left waiting. */
   private async onRequestExpired(request: any) {
     if (!request) return;
 
@@ -444,17 +349,9 @@ export class RideNotificationsService implements OnModuleInit {
       data: { dedupeKey: `ride-request-expired:${request.id}`, requestId: request.id },
     });
 
-    // The drivers who were offered it should stop showing the card too.
     await this.onRequestCancelled(request);
   }
 
-  // ----------------------------------------------------------------- trip
-
-  /**
-   * ARRIVED, IN_PROGRESS and COMPLETED. ACCEPTED is skipped: it is the same
-   * moment as the accepted bid, which the driver has already been told about
-   * and the passenger triggered themselves.
-   */
   private async onTripStatus(order: any) {
     const copy = this.tripCopy(order);
     if (!copy) return;
@@ -515,11 +412,6 @@ export class RideNotificationsService implements OnModuleInit {
     }
   }
 
-  /**
-   * Both parties. The event carries no record of who pressed the button, and
-   * whoever did is looking at the confirmation anyway — a duplicate on their
-   * own screen is a smaller failure than the other party never being told.
-   */
   private async onTripCancelled(order: any) {
     const reason = order.cancellationReason ? ` Reason: ${order.cancellationReason}` : '';
 
@@ -540,7 +432,6 @@ export class RideNotificationsService implements OnModuleInit {
     if (order.driverId) await this.push.sendToDrivers([order.driverId], message);
   }
 
-  /** Chat on an active trip, to whichever party did not write it. */
   private async onMessage(message: any) {
     const order = await this.prisma.order.findUnique({
       where: { id: message.orderId },
@@ -556,7 +447,6 @@ export class RideNotificationsService implements OnModuleInit {
       type: PUSH_TYPES.TRIP_MESSAGE,
       title: message.sender?.name ?? 'New message',
       body: message.content,
-      // Per conversation, not per message — a burst of chat is one tray entry.
       collapseKey: `order:${message.orderId}:chat`,
       ttlSeconds: TRIP_TTL_SECONDS,
       data: {
@@ -568,13 +458,6 @@ export class RideNotificationsService implements OnModuleInit {
     });
   }
 
-  // ------------------------------------------------------------------ kyc
-
-  /**
-   * The one notification a driver is actively waiting for — they sit on the
-   * approval screen until it arrives, so without push they have to keep
-   * reopening the app to find out.
-   */
   private async onKycUpdated(driver: any) {
     const approved = driver.kycStatus === KycStatus.APPROVED;
 
@@ -595,13 +478,6 @@ export class RideNotificationsService implements OnModuleInit {
   }
 }
 
-/**
- * Money as a driver reads it on a lock screen.
- *
- * Intl is used for the grouping only — its NGN output is "NGN 1,250" on a
- * server with no locale data, and the symbol is what makes the number scannable
- * at a glance.
- */
 const SYMBOLS: Record<string, string> = { NGN: '₦', USD: '$', GBP: '£', EUR: '€' };
 
 function money(amount: number | null | undefined, currency = 'NGN'): string {

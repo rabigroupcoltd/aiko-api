@@ -6,17 +6,6 @@ import { driverDebtStatus } from '../drivers/driver-debt.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlatformSettingsService } from '../settings/platform-settings.service';
 
-/**
- * An order that finished and earned money, in either lane.
- *
- * The two lanes end at different statuses — the legacy bid flow at COMPLETED,
- * the marketplace at DELIVERED — and every figure here originally counted only
- * the first. That was correct when the bid flow was the product; it silently
- * reports zero revenue now that dispatch runs through the marketplace, because
- * no marketplace order ever reaches COMPLETED.
- *
- * Both, therefore. A delivery is a delivery whichever way the driver got it.
- */
 const EARNING_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED, OrderStatus.DELIVERED];
 
 @Injectable()
@@ -166,7 +155,6 @@ export class AnalyticsService {
         today: stats(todayOrders),
         thisWeek: stats(weekOrders),
         thisMonth: stats(monthOrders),
-        // Counted in the database rather than from a capped page of rows.
         allTime: { total: allTimeTotal, revenue: allTimeRevenue._sum.fare || 0 },
       });
     } catch (e) {
@@ -216,7 +204,6 @@ export class AnalyticsService {
     }
   }
 
-  /** Per-vehicle-type breakdown — how tricycle demand compares to bicycle. */
   async getVehicleTypeAnalytics(): Promise<ServiceResult> {
     try {
       const [rules, orderStats, driverStats] = await Promise.all([
@@ -313,7 +300,6 @@ function startOfToday(): Date {
   return date;
 }
 
-/** The string form of EARNING_STATUSES, for rows already loaded into memory. */
 function isEarning(status: string): boolean {
   return (EARNING_STATUSES as string[]).includes(status);
 }

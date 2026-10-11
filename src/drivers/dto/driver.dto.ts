@@ -30,10 +30,6 @@ export const VEHICLE_PHOTO_TYPES = [
 const PHOTO_TYPE = VEHICLE_PHOTO_TYPES.join('|');
 const PHOTO_TYPE_LIST = new RegExp(`^(${PHOTO_TYPE})(,(${PHOTO_TYPE}))*$`);
 
-/**
- * Submitted as multipart/form-data alongside the vehicle photos, so every
- * numeric field arrives as a string and needs an explicit @Type.
- */
 export class RegisterDriverDto {
   @ApiProperty({ enum: VEHICLE_TYPES, example: 'TRICYCLE' })
   @IsEnum(VEHICLE_TYPES)

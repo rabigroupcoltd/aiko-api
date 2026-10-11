@@ -24,7 +24,6 @@ const STAFF_WHERE: Prisma.UserWhereInput = {
   OR: [{ roles: { has: UserRole.ADMIN } }, { roles: { has: UserRole.SUPPORT } }],
 };
 
-/** How each user-management tab is defined. Staff never appear on the other two. */
 const DIRECTORY_WHERE: Record<'PASSENGER' | 'DRIVER' | 'STAFF', Prisma.UserWhereInput> = {
   STAFF: STAFF_WHERE,
   DRIVER: {
@@ -59,7 +58,6 @@ const DIRECTORY_DRIVER_SELECT = {
   createdAt: true,
 } satisfies Prisma.DriverSelect;
 
-/** Where a would-be driver is with approval, including "never submitted". */
 function driverApproval(
   accountType: AccountType | null,
   driver: { kycStatus: KycStatus } | null,
@@ -89,13 +87,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * The admin's user-management list, one tab at a time.
-   *
-   * Driven from users rather than driver rows, so the Drivers tab includes
-   * people who chose to drive but never submitted documents — they have no
-   * driver row yet and were invisible on a driver-based list.
-   */
   async directory(query: UserDirectoryQueryDto = {}): Promise<ServiceResult> {
     try {
       const type = query.type ?? 'PASSENGER';
@@ -130,7 +121,6 @@ export class UsersService {
             driver: { select: DIRECTORY_DRIVER_SELECT },
             _count: { select: { orders: true } },
           },
-          // Most recently active first — a rider who just resubmitted is on top.
           orderBy: { updatedAt: 'desc' },
           take: 500,
         }),
@@ -159,11 +149,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * Everything the user detail page needs in one call: the account, the
-   * driver profile with its documents and wallet, and trip/money totals on
-   * both sides — every driver is a passenger too.
-   */
   async overview(id: string): Promise<ServiceResult> {
     try {
       const user = await this.prisma.user.findUnique({
@@ -232,7 +217,6 @@ export class UsersService {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id },
-        // Explicit select — an `include` would ship the password hash to the client.
         select: { ...PUBLIC_USER_SELECT, driver: { include: { vehiclePhotos: true } } },
       });
 
@@ -268,15 +252,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * Blocks (or unblocks) any account — a passenger, a rider, or another staff
-   * member. `JwtStrategy` re-checks `isBlocked` on every request, so this
-   * takes effect immediately rather than at the account's next sign-in.
-   *
-   * Deliberately does not touch anything else: an order already in progress
-   * is left alone, same as blocking a driver never un-assigns their held
-   * orders. Only new activity by this account is what stops.
-   */
   async block(id: string, dto: BlockUserDto, actor?: JwtUser): Promise<ServiceResult> {
     try {
       const existing = await this.prisma.user.findUnique({ where: { id } });
@@ -306,19 +281,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * Creates a password-authenticated staff account — the dashboard's own
-   * equivalent of `prisma/seed.ts`'s admin bootstrap, for every account after
-   * the first one.
-   *
-   * `USER` is added alongside whatever role is requested, the same way the
-   * seed script does it: nothing else in the codebase should have to
-   * special-case "a staff account with no base role".
-   *
-   * Staff never walk the onboarding stack — `OnboardingService.isStaff` keys
-   * on `authProvider === PASSWORD`, which this sets, so the new account
-   * resolves straight to DONE the first time anything asks.
-   */
   async createStaff(dto: CreateStaffDto, actor?: JwtUser): Promise<ServiceResult> {
     try {
       const email = dto.email.trim().toLowerCase();

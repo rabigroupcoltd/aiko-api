@@ -13,15 +13,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  /**
-   * Re-reads roles and block status from the database on every request,
-   * rather than trusting the seven-day-old claims baked into the token.
-   *
-   * Two things a token must not be able to outrun: a block — moderation has
-   * to take effect on the very next request, not whenever this token happens
-   * to expire — and a role change, so promoting someone to SUPPORT or
-   * blocking them does not need a sign-out first.
-   */
   async validate(payload: any) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },

@@ -5,42 +5,24 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MAX_TOKENS_PER_BATCH, PushType, RIDE_CHANNEL_ID } from './notifications.constants';
 
 export interface PushMessage {
-  /** Omitted for a silent message — see `silent`. */
   title?: string;
   body?: string;
   type: PushType;
-  /** Merged into the data payload. Values are stringified; nullish keys are dropped. */
   data?: Record<string, string | number | boolean | null | undefined>;
-  /**
-   * Data only, no tray entry. For updates the app should act on without
-   * interrupting anyone — a withdrawn offer disappearing from a driver's inbox.
-   */
   silent?: boolean;
-  /** Later messages with the same key replace earlier ones in the tray. */
   collapseKey?: string;
-  /** Seconds FCM may hold this for an offline device. */
   ttlSeconds?: number;
-  /** 'normal' lets Android batch delivery to save battery. Defaults to 'high'. */
   priority?: 'high' | 'normal';
 }
 
 export interface PushResult {
   sent: number;
   failed: number;
-  /** Tokens deleted because FCM said the install is gone. */
   pruned: number;
 }
 
 const EMPTY: PushResult = { sent: 0, failed: 0, pruned: 0 };
 
-/**
- * FCM transport.
- *
- * Push is best effort by design: nothing here throws, and every failure is
- * logged rather than propagated. A trip must complete whether or not the
- * passenger's handset could be reached, so no caller is expected to handle a
- * delivery error — the socket and the REST endpoints remain the reliable path.
- */
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
@@ -50,7 +32,6 @@ export class PushService {
     private firebase: FirebaseService,
   ) {}
 
-  /** Sends to every device registered to any of these users. */
   async sendToUsers(userIds: (string | null | undefined)[], message: PushMessage): Promise<PushResult> {
     const recipients = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
     if (recipients.length === 0) return EMPTY;
@@ -83,8 +64,6 @@ export class PushService {
         totals.failed += outcome.failed;
         totals.pruned += outcome.pruned;
       } catch (e: any) {
-        // A transport-level failure (network, credentials) fails the whole
-        // batch — there is nothing token-specific to prune.
         this.logger.error(`FCM send failed for ${message.type}: ${e?.message}`);
         totals.failed += batch.length;
       }
@@ -98,7 +77,6 @@ export class PushService {
     return totals;
   }
 
-  /** Resolves driver ids to their user accounts, then sends. */
   async sendToDrivers(driverIds: (string | null | undefined)[], message: PushMessage): Promise<PushResult> {
     const ids = [...new Set(driverIds.filter((id): id is string => Boolean(id)))];
     if (ids.length === 0) return EMPTY;
@@ -114,16 +92,11 @@ export class PushService {
     );
   }
 
-  // ------------------------------------------------------------- internals
-
   private buildMessage(message: PushMessage): Omit<MulticastMessage, 'tokens'> {
     const priority = message.priority ?? 'high';
     const data = stringifyData({ ...message.data, type: message.type });
 
     return {
-      // A silent message carries no `notification` block at all: that is what
-      // stops Android from drawing a tray entry and hands the payload straight
-      // to the background handler instead.
       ...(message.silent ? {} : { notification: { title: message.title, body: message.body } }),
       data,
       android: {
@@ -145,22 +118,12 @@ export class PushService {
           ...(message.collapseKey ? { 'apns-collapse-id': message.collapseKey } : {}),
         },
         payload: {
-          // Silent messages need content-available for iOS to wake the app;
-          // visible ones get the default alert handling.
           aps: message.silent ? { contentAvailable: true } : { sound: 'default' },
         },
       },
     };
   }
 
-  /**
-   * Records what got through and drops tokens FCM says are dead.
-   *
-   * `invalid-argument` is treated as a dead token only when some other token in
-   * the same batch succeeded. On its own it also means "the payload is
-   * malformed", and a bad payload fails every token at once — pruning on that
-   * would delete the entire fleet's registrations over one bug.
-   */
   private async reconcile(
     tokens: string[],
     responses: { success: boolean; error?: { code?: string } }[],
@@ -222,7 +185,6 @@ export class PushService {
   }
 }
 
-/** FCM data payloads are string-to-string; anything else is rejected outright. */
 function stringifyData(
   data: Record<string, string | number | boolean | null | undefined>,
 ): Record<string, string> {

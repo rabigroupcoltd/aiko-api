@@ -25,21 +25,6 @@ interface HeldOrder {
   dropoffLocation: string;
 }
 
-/**
- * Catches a driver who goes dark while carrying an order — the failure the
- * heartbeat TTL alone does not cover.
- *
- * `filterOnline` already keeps a driver whose heartbeat has expired out of
- * *new* matching, so a silent driver simply stops being offered work. But
- * nothing was watching the orders they already hold: a rider whose driver's
- * phone died mid-delivery would just wait, with no signal anything was wrong,
- * until the driver reappeared or the rider gave up and contacted support.
- *
- * This runs on its own interval rather than piggybacking on the location
- * flush job — that job only visits drivers currently in the Redis geo index,
- * and a driver who has been silent long enough to concern us has usually
- * already fallen out of it.
- */
 @Processor(QUEUE_DRIVER_WATCHDOG, WORKER_OPTIONS)
 export class DriverWatchdogWorker extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(DriverWatchdogWorker.name);
@@ -121,7 +106,6 @@ export class DriverWatchdogWorker extends WorkerHost implements OnModuleInit {
           return;
         }
 
-        // Back online — whatever was flagged for this disappearance is over.
         if (online && alreadyFlagged) {
           await this.redis.clearDriverDarkFlag(driverId);
           cleared += 1;

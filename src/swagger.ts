@@ -8,12 +8,6 @@ import {
 const JSON_PATH = 'api/docs-json';
 const YAML_PATH = 'api/docs-yaml';
 
-/**
- * Swagger UI renders the spec from an inlined copy, so it never shows where the
- * raw document lives. This drops a pair of download links into the header block
- * once the UI has painted. Paths are derived from the browser location rather
- * than hard-coded, so they survive a change to the global prefix.
- */
 const DOWNLOAD_LINKS_JS = `
 (function () {
   var ATTEMPT_LIMIT = 100;
@@ -79,10 +73,6 @@ const DOWNLOAD_LINKS_CSS = `
 }
 `;
 
-/**
- * Mounts the OpenAPI document at /api/docs, the raw JSON at /api/docs-json and
- * YAML at /api/docs-yaml.
- */
 export function setupSwagger(app: INestApplication): void {
   const config = new DocumentBuilder()
     .setTitle('Aiko API')
@@ -152,13 +142,9 @@ export function setupSwagger(app: INestApplication): void {
       'bearer',
     )
     .build();
-  // Tags are declared on each controller with @ApiTags — nothing to add here.
 
   const document = SwaggerModule.createDocument(app, config);
 
-  // OpenAPI cannot describe a socket event, so the contract rides along as a
-  // vendor extension. Same constants as the markdown above, so the two cannot
-  // drift; generators ignore unknown `x-` keys.
   (document as unknown as Record<string, unknown>)['x-websocket'] = WEBSOCKET_CONTRACT;
 
   SwaggerModule.setup('api/docs', app, document, {
@@ -168,7 +154,6 @@ export function setupSwagger(app: INestApplication): void {
     customCss: DOWNLOAD_LINKS_CSS,
     customJsStr: DOWNLOAD_LINKS_JS,
     swaggerOptions: {
-      // Keeps the token across page reloads so you authorize once per session.
       persistAuthorization: true,
       docExpansion: 'none',
       filter: true,

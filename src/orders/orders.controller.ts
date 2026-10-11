@@ -86,7 +86,6 @@ export class OrdersController {
     }
   }
 
-  /** Kept from the original route table; `GET /api/drivers/nearby` is the newer equivalent. */
   @Get('drivers/nearby')
   @ApiOperation({
     summary: 'Find drivers near a point',

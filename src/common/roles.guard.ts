@@ -2,10 +2,6 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { AppRole, ROLES_KEY } from './roles.decorator';
 
-/**
- * Reads roles off the JWT payload attached by JwtStrategy.
- * Always pair with AuthGuard('jwt') — this guard does not authenticate.
- */
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}

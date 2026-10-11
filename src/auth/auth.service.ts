@@ -18,7 +18,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { FirebaseSignInDto, LoginDto } from './dto/auth.dto';
 
-/** Relations every sign-in response needs in order to report onboarding state. */
 const SIGN_IN_INCLUDE = {
   driver: { select: ONBOARDING_DRIVER_SELECT },
 } satisfies Prisma.UserInclude;
@@ -35,15 +34,6 @@ export class AuthService {
     private response: ResponsesService,
   ) {}
 
-  /**
-   * The app's only way in.
-   *
-   * Takes an ID token from any Firebase provider — Google gives us an email,
-   * phone auth gives us a number — verifies it, then finds or creates the
-   * matching account. The response is identical for a brand-new user and a
-   * returning one apart from `isNewUser`: the client always just navigates to
-   * `onboarding.resumeStep`, which is DONE for anyone already set up.
-   */
   async signInWithFirebase(dto: FirebaseSignInDto): Promise<ServiceResult> {
     try {
       const verified = await this.firebase.verifyIdToken(dto.idToken);
@@ -69,14 +59,6 @@ export class AuthService {
     }
   }
 
-  /**
-   * Matches an incoming token to an account, in descending order of certainty.
-   *
-   * The uid is exact. Email and phone are the fallbacks that let someone who
-   * signed up with Google come back through phone auth — a different Firebase
-   * uid, but the same person — and land on their existing account rather than a
-   * duplicate. Without this, switching provider silently restarts onboarding.
-   */
   private async findByIdentity(identity: FirebaseIdentity) {
     const byUid = await this.prisma.user.findUnique({
       where: { firebaseUid: identity.uid },
@@ -103,13 +85,6 @@ export class AuthService {
     return null;
   }
 
-  /**
-   * Fills in anything the account is still missing and claims the uid.
-   *
-   * Deliberately non-destructive: a value the user typed during onboarding is
-   * never overwritten by the provider's version of it, because a name edited in
-   * the profile form must survive the next sign-in.
-   */
   private async linkExisting(user: User, identity: FirebaseIdentity) {
     const data: Prisma.UserUpdateInput = { lastLoginAt: new Date() };
 
@@ -119,7 +94,6 @@ export class AuthService {
     if (!user.name && identity.displayName) data.name = identity.displayName;
     if (!user.photoUrl && identity.photoUrl) data.photoUrl = identity.photoUrl;
 
-    // Verification flags only ever move forward.
     if (identity.emailVerified && !user.emailVerified) data.emailVerified = true;
     if (identity.phone && !user.phoneVerified) data.phoneVerified = true;
 
@@ -148,7 +122,6 @@ export class AuthService {
           ? AuthProvider.FIREBASE_PHONE
           : AuthProvider.FIREBASE_GOOGLE,
         roles: [UserRole.USER],
-        // Phone auth already has the number, so that step is behind them.
         onboardingStep: identity.phone ? 'PROFILE' : 'PHONE',
         lastLoginAt: new Date(),
       },
@@ -156,13 +129,6 @@ export class AuthService {
     });
   }
 
-  /**
-   * Password sign-in, kept for staff.
-   *
-   * Firebase accounts have no password column, so they fall out at the null
-   * check — this stays an admin door without needing an explicit role gate that
-   * would also have to be maintained.
-   */
   async login(dto: LoginDto): Promise<ServiceResult> {
     try {
       const user = await this.prisma.user.findUnique({
@@ -170,17 +136,11 @@ export class AuthService {
         include: SIGN_IN_INCLUDE,
       });
 
-      // Same message on every failure path so the endpoint cannot be used to
-      // enumerate emails, or to tell a password account from a Firebase one.
       if (!user || !user.password) return unauthorized('Invalid credentials');
 
       const isPasswordValid = await bcrypt.compare(dto.password, user.password);
       if (!isPasswordValid) return unauthorized('Invalid credentials');
 
-      // Checked after the password, not before: the caller has already
-      // proven they own these credentials, so naming the real reason here
-      // does not hand an attacker anything the enumeration guard above
-      // protects against.
       if (user.isBlocked) return unauthorized('This account has been blocked');
 
       await this.prisma.user.update({
@@ -202,7 +162,6 @@ export class AuthService {
     try {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
-        // Explicit select — an `include` would ship the password hash to the client.
         select: {
           ...PUBLIC_USER_SELECT,
           driver: { include: { vehiclePhotos: true } },
@@ -218,7 +177,6 @@ export class AuthService {
     }
   }
 
-  /** Never let the password hash out, whatever the caller asked for. */
   private publicView(user: User) {
     const { password, ...rest } = user as User & { password: string | null };
     return rest;
@@ -232,13 +190,6 @@ export class AuthService {
   }
 }
 
-/**
- * Best-effort split of a provider display name.
- *
- * Everything after the first token becomes the surname, so "Ada Nkem Obi" gives
- * "Ada" / "Nkem Obi" rather than dropping the middle name. The user can correct
- * both on the profile screen — this only exists to pre-fill it.
- */
 function splitName(displayName: string | null): {
   firstName: string | null;
   lastName: string | null;

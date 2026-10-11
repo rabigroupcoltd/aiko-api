@@ -22,12 +22,6 @@ const SETTINGS_EXAMPLE = [
   },
 ];
 
-/**
- * Global numeric knobs — not per-vehicle rate cards (that's `/pricing`), and
- * not the dispatch/route-optimizer dials (those stay env-only; see
- * MARKETPLACE_CONFIG). Admin-only: these change how every fare and every
- * distance-fallback estimate behaves platform-wide.
- */
 @ApiTags('Settings')
 @ApiBearerAuth('bearer')
 @Controller('settings')

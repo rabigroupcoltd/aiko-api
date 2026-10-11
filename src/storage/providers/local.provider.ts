@@ -5,10 +5,6 @@ import { join, resolve } from 'path';
 import { IStorageProvider, StorageUploadResult, UploadFile, UploadOptions } from '../storage.types';
 import { buildObjectKey } from '../storage.util';
 
-/**
- * Writes to the local filesystem and serves through the static `/uploads` route
- * registered in main.ts. Intended for development — no credentials required.
- */
 @Injectable()
 export class LocalStorageProvider implements IStorageProvider {
   readonly name = StorageProvider.LOCAL;

@@ -26,13 +26,6 @@ const ORDER_ID_PARAM = {
   example: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33',
 } as const;
 
-/**
- * The driver's order marketplace.
- *
- * Everything here is driver-side. The customer's half of the same feature lives
- * on `/api/orders` — an order is created, tracked and cancelled there, and only
- * appears in this grid while it is unclaimed.
- */
 @ApiTags('Marketplace')
 @ApiBearerAuth('bearer')
 @Controller('marketplace')

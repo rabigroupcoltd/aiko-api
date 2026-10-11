@@ -25,11 +25,6 @@ export const ONBOARDING_STEPS = [
 
 export const ACCOUNT_TYPES = ['PASSENGER', 'RIDER'] as const;
 
-/**
- * One body for every onboarding screen — send only the fields the screen just
- * captured. The server persists them and recomputes where the user should go
- * next, so a client never has to work out the resume point itself.
- */
 export class UpdateOnboardingDto {
   @ApiPropertyOptional({
     enum: ONBOARDING_STEPS,
@@ -40,8 +35,6 @@ export class UpdateOnboardingDto {
   @IsOptional()
   @IsEnum(ONBOARDING_STEPS)
   step?: (typeof ONBOARDING_STEPS)[number];
-
-  // ---------------------------------------------------------- profile step
 
   @ApiPropertyOptional({ example: 'Ada', minLength: 1, maxLength: 100 })
   @IsOptional()
@@ -79,8 +72,6 @@ export class UpdateOnboardingDto {
   @Matches(/^\+?[0-9]{7,15}$/, { message: 'phone must be a valid phone number' })
   phone?: string;
 
-  // ------------------------------------------------------------ photo step
-
   @ApiPropertyOptional({
     example: 'http://localhost:3000/uploads/selfies/3f2a7c1e.jpg',
     description: 'URL of the already-uploaded selfie.',
@@ -98,8 +89,6 @@ export class UpdateOnboardingDto {
   @MaxLength(500)
   profilePhotoKey?: string;
 
-  // --------------------------------------------------------- liveness step
-
   @ApiPropertyOptional({
     example: true,
     description: 'Set once the on-device liveness check passes. false clears it.',
@@ -107,8 +96,6 @@ export class UpdateOnboardingDto {
   @IsOptional()
   @IsBoolean()
   livenessPassed?: boolean;
-
-  // -------------------------------------------------------- user type step
 
   @ApiPropertyOptional({
     enum: ACCOUNT_TYPES,

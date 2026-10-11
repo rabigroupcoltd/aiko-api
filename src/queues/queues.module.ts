@@ -9,10 +9,6 @@ import {
 } from './queues.constants';
 import { QueuesService } from './queues.service';
 
-/**
- * Registers the queues and the producer service. Workers live in
- * WorkersModule so feature modules can enqueue without a circular import.
- */
 @Global()
 @Module({
   imports: [

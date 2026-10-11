@@ -10,14 +10,6 @@ import { AUDIT_LOG_EXAMPLE, AUDIT_LOG_PAGE_EXAMPLE } from '../common/swagger/exa
 import { AuditService } from './audit.service';
 import { AUDIT_ENTITIES, AuditQueryDto } from './dto/audit.dto';
 
-/**
- * The admin audit trail — read-only, admin only.
- *
- * There is deliberately no write endpoint. Entries are produced by the services
- * that perform the action, so the trail cannot be forged from outside, and no
- * update or delete route exists at all: a log an admin can edit answers no
- * question worth asking.
- */
 @ApiTags('Audit')
 @ApiBearerAuth('bearer')
 @Controller('audit')

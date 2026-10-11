@@ -7,10 +7,6 @@ import {
   WORKER_OPTIONS,
 } from '../queues.constants';
 
-/**
- * Expires a ride request nobody accepted. expireRequest() is guarded, so a
- * request that was accepted just before the job fires is left alone.
- */
 @Processor(QUEUE_RIDE_TIMEOUT, WORKER_OPTIONS)
 export class RideTimeoutWorker extends WorkerHost {
   private readonly logger = new Logger(RideTimeoutWorker.name);

@@ -6,7 +6,6 @@ import { ServiceResult, ok } from '../common/responses/response.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditQueryDto } from './dto/audit.dto';
 
-/** Everything needed to write one trail entry. */
 export interface AuditInput {
   actor?: JwtUser | null;
   actorName?: string | null;
@@ -19,19 +18,6 @@ export interface AuditInput {
   userAgent?: string | null;
 }
 
-/**
- * The admin audit trail.
- *
- * Append-only. Nothing in this service updates or deletes, and there is no
- * endpoint that does either — a log an admin can edit answers no question worth
- * asking.
- *
- * `record` never throws. An audit write failing must not roll back the action it
- * was describing: refusing to approve a driver's KYC because the log was
- * unreachable turns a bookkeeping problem into an operational one. The failure
- * is logged loudly instead, which is the honest trade — a gap in the trail that
- * is visible beats a blocked admin.
- */
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
@@ -46,8 +32,6 @@ export class AuditService {
       await this.prisma.auditLog.create({
         data: {
           actorId: input.actor?.sub ?? null,
-          // Denormalised so the trail still reads correctly after the account is
-          // renamed or removed. What was true at the time is the point.
           actorName: input.actorName ?? null,
           actorRole: input.actor?.roles?.[0] ?? null,
           action: input.action,
@@ -64,13 +48,6 @@ export class AuditService {
     }
   }
 
-  /**
-   * The log, newest first.
-   *
-   * Paginated rather than streamed: this is read by a person scanning for one
-   * thing, and the filters below are how they narrow it. An unfiltered read of
-   * the whole table is never the useful query.
-   */
   async list(query: AuditQueryDto): Promise<ServiceResult> {
     try {
       const page = query.page ?? 1;
@@ -110,12 +87,6 @@ export class AuditService {
     }
   }
 
-  /**
-   * Everything that ever happened to one record.
-   *
-   * The question an admin actually asks — "why does this driver look like
-   * this" — is about a row, not about a time range.
-   */
   async forEntity(entity: AuditEntity, entityId: string): Promise<ServiceResult> {
     try {
       return ok(
@@ -130,7 +101,6 @@ export class AuditService {
     }
   }
 
-  /** Distinct action verbs present in the log, for the filter dropdown. */
   async actions(): Promise<ServiceResult> {
     try {
       const rows = await this.prisma.auditLog.findMany({

@@ -11,33 +11,20 @@ enum UserRole {
   USER
   RIDER
   ADMIN
-  /// Works support tickets and looks up orders/drivers/users. Deliberately
-  /// excluded from pricing, settings, wallets and KYC approval — see
-  /// RolesGuard usages tagged @Roles('ADMIN', 'SUPPORT') for the exact boundary.
   SUPPORT
 }
 
-/// How the account was established. Firebase accounts never have a password;
-/// PASSWORD accounts are seeded staff and never carry a firebaseUid.
 enum AuthProvider {
   FIREBASE_GOOGLE
   FIREBASE_PHONE
   PASSWORD
 }
 
-/// What the user picked on the UserType screen. Null until they choose.
 enum AccountType {
   PASSENGER
   RIDER
 }
 
-/// Mirrors the Aiko onboarding stack, one value per screen the user must clear.
-/// Stored as the client's breadcrumb; the authoritative resume point is derived
-/// from data presence — see OnboardingService.resolveStep.
-///
-/// The last two are rider-only. RIDER_DOCS is the vehicle registration itself,
-/// and AWAITING_APPROVAL is the wait for an admin to clear the KYC — a real
-/// screen the driver sits on, not an internal state.
 enum OnboardingStep {
   PHONE
   PROFILE
@@ -55,20 +42,6 @@ enum KycStatus {
   REJECTED
 }
 
-/// Two lanes share one enum.
-///
-/// The original ride lane — PENDING → ACCEPTED → ARRIVED → IN_PROGRESS →
-/// COMPLETED — is what the broadcast-and-bid flow produces and is untouched.
-///
-/// The marketplace lane — SEARCHING_FOR_DRIVER → RESERVED →
-/// DRIVER_ARRIVING_PICKUP → PICKED_UP → IN_TRANSIT → DELIVERED — is what a
-/// customer order goes through when drivers claim it themselves. RESERVED means
-/// a driver has committed to the order but has not collected it; PICKED_UP
-/// means they physically have it. That distinction is what makes it safe for one
-/// driver to hold several orders at once.
-///
-/// NO_DRIVER_FOUND is terminal and marketplace-only: the search widened as far
-/// as it was allowed to and nobody claimed it.
 enum OrderStatus {
   PENDING
   ACCEPTED
@@ -86,7 +59,6 @@ enum OrderStatus {
   NO_DRIVER_FOUND
 }
 
-/// What a driver did with an order they were shown in the marketplace.
 enum DriverOrderActionType {
   SKIPPED
   RESERVED
@@ -126,9 +98,6 @@ enum StorageProvider {
   CLOUDFLARE_R2
 }
 
-/// Which FCM transport a registration token belongs to. Only ANDROID is
-/// exercised today; the others are here so a token from a future build does not
-/// need a migration to be stored.
 enum DevicePlatform {
   ANDROID
   IOS
@@ -141,7 +110,6 @@ enum VehiclePhotoType {
   SIDE
   INTERIOR
   PLATE_NUMBER
-  /// KYC identity documents, captured on the rider documents step.
   DRIVER_LICENSE
   NATIONAL_ID
   OTHER
@@ -165,43 +133,29 @@ enum BidStatus {
 model User {
   id String @id @default(uuid())
 
-  /// Null for phone-only accounts — Firebase phone auth carries no email.
   email String? @unique
-  /// Null for every Firebase account. Only seeded staff have one, which is what
-  /// keeps password login effectively admin-only.
   password String?
-  /// Firebase `uid`. The primary key we match on when a token comes back.
   firebaseUid String? @unique
 
   authProvider  AuthProvider @default(PASSWORD)
   emailVerified Boolean      @default(false)
   phoneVerified Boolean      @default(false)
 
-  /// Display name. Derived from firstName + lastName once the profile step is
-  /// done; before that it is whatever the identity provider supplied, or null.
   name      String?
   firstName String?
   lastName  String?
-  /// Null until the phone step. Not unique — two Firebase identities can point
-  /// at one number before they are merged, and a hard constraint would 500.
   phone String?
   dob   DateTime?
-  /// Avatar from the identity provider, distinct from the liveness selfie.
   photoUrl String?
 
   roles UserRole[]
 
-  /// Blocked accounts are rejected at sign-in and on every subsequent request
-  /// — see JwtStrategy — not just prevented from getting a fresh token. Orders
-  /// already in flight are left alone; only new activity by this account stops.
   isBlocked     Boolean @default(false)
   blockedReason String?
 
-  // ------------------------------------------------------------- onboarding
   accountType           AccountType?
   onboardingStep        OnboardingStep @default(PHONE)
   onboardingCompletedAt DateTime?
-  /// The selfie captured on the ProfilePhoto screen.
   profilePhotoUrl String?
   profilePhotoKey String?
   livenessPassedAt DateTime?
@@ -223,22 +177,14 @@ model User {
   supportMessages  SupportMessage[] @relation("SupportSender")
 }
 
-/// Where to send a push. One row per app install, not per user: a handset that
-/// changes hands re-registers the same token under the new account, which is why
-/// `token` is unique globally rather than per user — the old owner must stop
-/// receiving that device's notifications the moment somebody else signs in on it.
 model DeviceToken {
   id       String         @id @default(uuid())
   userId   String
-  /// The FCM registration token.
   token    String         @unique
   platform DevicePlatform @default(ANDROID)
-  /// Stable per install, so a token rotation can replace the previous row for
-  /// the same handset instead of leaving a dead one behind.
   deviceId   String?
   deviceName String?
   appVersion String?
-  /// Last time FCM accepted a message for this token. Null until the first send.
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -255,7 +201,6 @@ model Driver {
   userId             String      @unique
   vehicleType        VehicleType
   vehiclePlate       String
-  /// The make, e.g. Bajaj, TVS, Honda.
   vehicleBrand       String?
   vehicleModel       String?
   vehicleColor       String?
@@ -264,7 +209,6 @@ model Driver {
   kycRejectionReason String?
   isAvailable        Boolean     @default(false)
   isBlocked          Boolean     @default(false)
-  /// Per-driver override. Null follows the DRIVER_DEBT_LIMIT platform setting.
   debtLimit          Float?
   currentDebt        Float       @default(0)
   rating             Float       @default(5.0)
@@ -329,7 +273,6 @@ model PricingRule {
   minimumFare        Float       @default(0)
   bookingFee         Float       @default(0)
   surgeMultiplier    Float       @default(1)
-  /// Used to turn distance into an ETA — a bicycle and a car quote very differently.
   avgSpeedKph        Float       @default(25)
   platformFeePercent Float       @default(10)
   currency           String      @default("NGN")
@@ -361,9 +304,6 @@ model Address {
   @@map("addresses")
 }
 
-/// Shared gazetteer of places resolved from the Places API. Keeping it separate
-/// from Address means a lookup by one user warms the cache for everyone without
-/// polluting anybody's saved-address list.
 model PlaceCache {
   id          String   @id @default(uuid())
   placeId     String?  @unique
@@ -372,14 +312,7 @@ model PlaceCache {
   latitude    Float
   longitude   Float
   searchCount Int      @default(1)
-  /// landmark | market | campus | hospital | transport | government | residential.
-  /// Only set for seeded places; rows written back from the Places API have none.
   category String?
-  /// Lower-cased name, local aliases and area, joined for matching.
-  ///
-  /// Exists so "kasuwa" finds Minna Central Market. Postgres cannot pattern-match
-  /// inside a text[] without unnest, and folding the aliases into one column keeps
-  /// the search a plain Prisma query rather than raw SQL.
   searchText String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -438,19 +371,8 @@ model RideBid {
 model Order {
   id                 String        @id @default(uuid())
   userId             String
-  /// The one driver who owns this order. A single nullable column is what makes
-  /// "one order → one driver" structural: there is nowhere to put a second.
-  /// The inverse — one driver → many orders — is just many rows pointing here.
   driverId           String?
   vehicleType        VehicleType
-  /// What the passenger is sending, in their own words.
-  ///
-  /// Aiko moves parcels, and the driver's first real question about a job is
-  /// what they are being asked to carry — a laptop and a gas cylinder are the
-  /// same distance and the same fare, and not the same decision. Free text
-  /// rather than a category enum: the pilot has no data yet on what people
-  /// actually send, and guessing the categories now would just force everything
-  /// into OTHER.
   description        String?       @db.VarChar(500)
   pickupLocation     String
   dropoffLocation    String
@@ -458,8 +380,6 @@ model Order {
   pickupLng          Float
   dropoffLat         Float
   dropoffLng         Float
-  /// Who to call at each end. Distinct from the account phone: the person
-  /// sending a parcel is often not the person receiving it.
   pickupPhone        String?
   dropoffPhone       String?
   distanceKm         Float         @default(0)
@@ -474,18 +394,13 @@ model Order {
   driverEarnings     Float         @default(0)
   cancellationReason String?
   acceptedAt         DateTime?
-  /// Stamped when a driver claims the order. `acceptedAt` is set alongside it so
-  /// everything that already reads acceptance keeps working.
   reservedAt         DateTime?
   arrivedAt          DateTime?
   startedAt          DateTime?
-  /// The driver physically has the order — the RESERVED → PICKED_UP boundary.
   pickedUpAt         DateTime?
   deliveredAt        DateTime?
   completedAt        DateTime?
   cancelledAt        DateTime?
-  /// Marketplace dispatch bookkeeping: how wide the search has reached and how
-  /// many times it has widened. Null on orders that never went to the market.
   searchRadiusKm     Float?
   dispatchAttempts   Int           @default(0)
   createdAt          DateTime      @default(now())
@@ -502,17 +417,9 @@ model Order {
   @@index([status, createdAt])
   @@index([userId, createdAt])
   @@index([driverId, createdAt])
-  /// Serves the marketplace's bounding-box scan over open orders.
   @@index([status, pickupLat, pickupLng])
 }
 
-/// A driver's decision on one marketplace order.
-///
-/// One row per (order, driver): a skip is replaced by a reservation if the
-/// driver changes their mind and the order is still open, so the pair is unique
-/// rather than an append-only log. `hiddenUntil` is what stops a skipped order
-/// reappearing in the same driver's grid on the next poll — null means "never
-/// show me this again".
 model DriverOrderAction {
   id          String                @id @default(uuid())
   orderId     String
@@ -616,11 +523,6 @@ model AnalyticsSnapshot {
   createdAt        DateTime @default(now())
 }
 
-// ---------------------------------------------------------------- admin ops
-
-/// What an admin action touched. Kept coarse on purpose: the point of an audit
-/// trail is to answer "who changed this thing" quickly, and a taxonomy with
-/// forty values makes that harder rather than easier.
 enum AuditEntity {
   DRIVER
   USER
@@ -631,30 +533,15 @@ enum AuditEntity {
   SYSTEM
 }
 
-/// An admin did something that changed state.
-///
-/// Written by AuditService rather than by the services themselves, so a feature
-/// gains an audit trail by being called through the interceptor rather than by
-/// remembering to log. Append-only: nothing updates or deletes a row here, which
-/// is the only property that makes the log worth reading.
 model AuditLog {
   id        String      @id @default(uuid())
-  /// The admin who acted. Nullable because a system job is a legitimate actor
-  /// and inventing a user id for it would be worse than admitting there is none.
   actorId   String?
-  /// Denormalised so the log still reads correctly after the account is renamed
-  /// or removed — the trail records what was true when it happened.
   actorName String?
   actorRole String?
-  /// Dotted verb — `driver.kyc.approve`, `order.cancel`, `pricing.update`.
   action    String
   entity    AuditEntity
-  /// The row that changed, when a single row did.
   entityId  String?
-  /// Human summary, rendered straight into the log table.
   summary   String
-  /// Before/after, or the request body. Shape varies by action, which is why it
-  /// is Json rather than columns — this is read by people, not queried.
   metadata  Json?
   ipAddress String?
   userAgent String?
@@ -662,7 +549,6 @@ model AuditLog {
 
   actor User? @relation("AuditActor", fields: [actorId], references: [id])
 
-  /// The log is read newest-first, and filtered by actor or by entity.
   @@index([createdAt])
   @@index([entity, entityId])
   @@index([actorId, createdAt])
@@ -682,26 +568,16 @@ enum SupportPriority {
   URGENT
 }
 
-/// A customer or driver asked for help.
-///
-/// Deliberately not a chat thread with an order attached: most tickets are about
-/// an order, but the ones that are not — a driver disputing a debt, a customer
-/// who cannot sign in — are exactly the ones that matter most and would have no
-/// home in an order-scoped model.
 model SupportTicket {
   id         String          @id @default(uuid())
-  /// Short, sequential, quotable over the phone. A uuid is unreadable aloud.
   reference  String          @unique
   requesterId String
-  /// Set when the ticket is about a specific delivery.
   orderId    String?
   subject    String
   category   String?
   status     SupportStatus   @default(OPEN)
   priority   SupportPriority @default(NORMAL)
-  /// The admin who owns it. Null means nobody has picked it up.
   assigneeId String?
-  /// Denormalised from the last message so the list does not need a join per row.
   lastMessageAt DateTime     @default(now())
   resolvedAt DateTime?
   closedAt   DateTime?
@@ -713,7 +589,6 @@ model SupportTicket {
   order     Order?           @relation(fields: [orderId], references: [id])
   messages  SupportMessage[]
 
-  /// The queue view: open tickets, most recently active first.
   @@index([status, lastMessageAt])
   @@index([requesterId, createdAt])
   @@index([assigneeId, status])
@@ -723,11 +598,7 @@ model SupportMessage {
   id        String   @id @default(uuid())
   ticketId  String
   senderId  String
-  /// True when an admin wrote it. Stored rather than derived from the sender's
-  /// role, because an admin who later loses the role must not retroactively
-  /// turn their replies into customer messages.
   fromStaff Boolean  @default(false)
-  /// Staff-only note. Never returned to the requester.
   internal  Boolean  @default(false)
   body      String
   createdAt DateTime @default(now())

@@ -35,10 +35,6 @@ const REQUEST_ID_PARAM = {
   example: RIDE_REQUEST_EXAMPLE.id,
 } as const;
 
-/**
- * REST mirror of the WebSocket matching flow, for clients that cannot hold a
- * socket open (background, poor network) and for admin tooling.
- */
 @ApiTags('Ride Requests')
 @ApiBearerAuth('bearer')
 @Controller('ride-requests')
@@ -84,7 +80,6 @@ export class RideController {
     }
   }
 
-  /** A driver's inbox of open requests they were matched into. */
   @Get('inbox')
   @ApiOperation({
     summary: "A driver's inbox",
@@ -103,7 +98,6 @@ export class RideController {
     }
   }
 
-  /** Discovery for a driver who was not matched — see findNearbyOpen. */
   @Get('nearby')
   @ApiOperation({
     summary: 'Open requests near a driver',

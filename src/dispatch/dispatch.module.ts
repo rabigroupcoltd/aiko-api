@@ -8,13 +8,6 @@ import { MarketplaceService } from './marketplace.service';
 import { OrderCompatibilityService } from './order-compatibility.service';
 import { RouteOptimizerService } from './route-optimizer.service';
 
-/**
- * The marketplace layer, sitting on top of the existing order model.
- *
- * Deliberately free of any dependency on OrdersModule: orders call *into*
- * dispatch when one is created, never the other way round, which is what keeps
- * the module graph acyclic while both halves talk to the same table.
- */
 @Module({
   imports: [AuthModule, DriversModule, PricingModule],
   controllers: [MarketplaceController],

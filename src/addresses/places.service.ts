@@ -9,11 +9,6 @@ export interface RemotePlace {
   longitude: number;
 }
 
-/**
- * Thin Google Places Text Search wrapper. Returns an empty list rather than
- * throwing when the key is missing or the call fails — address search must
- * still work off the local cache.
- */
 @Injectable()
 export class PlacesService {
   private readonly logger = new Logger(PlacesService.name);

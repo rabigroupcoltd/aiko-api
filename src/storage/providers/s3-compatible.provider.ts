@@ -9,17 +9,11 @@ export interface S3CompatibleConfig {
   bucket: string;
   accessKeyId?: string;
   secretAccessKey?: string;
-  /** Custom endpoint — required for R2, omitted for AWS S3. */
   endpoint?: string;
   forcePathStyle?: boolean;
-  /** CDN / custom domain used to build the public URL. */
   publicBaseUrl?: string;
 }
 
-/**
- * Shared implementation for any S3 API compatible store.
- * AWS S3 and Cloudflare R2 differ only in endpoint and URL construction.
- */
 export abstract class S3CompatibleStorageProvider implements IStorageProvider {
   abstract readonly name: StorageProvider;
 
@@ -28,7 +22,6 @@ export abstract class S3CompatibleStorageProvider implements IStorageProvider {
 
   protected constructor(protected readonly config: S3CompatibleConfig) {}
 
-  /** Lazy so a misconfigured inactive provider never breaks bootstrap. */
   private getClient(): S3Client {
     if (!this.client) {
       this.client = new S3Client({

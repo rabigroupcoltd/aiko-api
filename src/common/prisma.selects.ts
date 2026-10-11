@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 
-/** Never send the password hash over the wire. */
 export const PUBLIC_USER_SELECT = {
   id: true,
   email: true,
@@ -26,7 +25,6 @@ export const PUBLIC_USER_SELECT = {
   updatedAt: true,
 } satisfies Prisma.UserSelect;
 
-/** What a counterparty on a ride is allowed to see. */
 export const CONTACT_USER_SELECT = {
   id: true,
   name: true,

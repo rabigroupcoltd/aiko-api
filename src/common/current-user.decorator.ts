@@ -6,10 +6,6 @@ export interface JwtUser {
   roles: string[];
 }
 
-/**
- * @CurrentUser() user: JwtUser      -> whole payload
- * @CurrentUser('sub') userId: string -> single field
- */
 export const CurrentUser = createParamDecorator(
   (data: keyof JwtUser | undefined, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();

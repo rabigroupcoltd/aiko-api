@@ -29,7 +29,6 @@ import { WalletModule } from './wallet/wallet.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
 
-    // Global infrastructure — available to every feature module without re-import.
     ResponsesModule,
     PrismaModule,
     RedisModule,
@@ -38,7 +37,6 @@ import { WalletModule } from './wallet/wallet.module';
     QueuesModule,
     FirebaseModule,
     PlatformSettingsModule,
-    // After FirebaseModule — it sends through the same credentials.
     NotificationsModule,
 
     AuthModule,
@@ -47,7 +45,6 @@ import { WalletModule } from './wallet/wallet.module';
     PricingModule,
     DriversModule,
     AddressesModule,
-    // Before OrdersModule — an order dispatches into the marketplace on create.
     DispatchModule,
     OrdersModule,
     RideModule,
@@ -57,7 +54,6 @@ import { WalletModule } from './wallet/wallet.module';
     SupportModule,
     AdminModule,
 
-    // Drop this import to run an API-only instance with workers hosted elsewhere.
     WorkersModule,
   ],
 })

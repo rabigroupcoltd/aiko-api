@@ -29,10 +29,6 @@ const DRIVER_ID_PARAM = {
   example: DRIVER_EXAMPLE.id,
 } as const;
 
-/**
- * Every route is authenticated and ownership-checked — wallet balances and
- * withdrawals must never be reachable with only a driverId.
- */
 @ApiTags('Wallet')
 @ApiBearerAuth('bearer')
 @Controller('wallet')

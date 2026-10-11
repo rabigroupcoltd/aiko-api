@@ -33,8 +33,6 @@ export class ResponsesService {
     EXCEPTION: 'INTERNAL SERVER ERROR',
   };
 
-  // ------------------------------------------------------------- success
-
   success<T>(data: T, message?: string): ApiSuccessResponse<T> {
     return {
       code: this.responseCodes.SUCCESS,
@@ -50,8 +48,6 @@ export class ResponsesService {
       data: this.cast(data),
     };
   }
-
-  // --------------------------------------------------------------- errors
 
   badRequest(error: any): ApiErrorResponse {
     return this.error(this.responseCodes.INVALID_REQUEST, this.responseMessages.INVALID_REQUEST, error);
@@ -77,7 +73,6 @@ export class ResponsesService {
     return this.error(this.responseCodes.UNAVAILABLE, this.responseMessages.UNAVAILABLE, error);
   }
 
-  /** 500s hide the underlying message in production but always log it. */
   exception(error: any): ApiErrorResponse {
     this.logger.error(`Unhandled failure: ${stringify(error)}`);
 
@@ -92,15 +87,6 @@ export class ResponsesService {
     return { code, message, error: normaliseError(error) };
   }
 
-  // -------------------------------------------------------------- mapping
-
-  /**
-   * Turns a `{ error, body }` service result into the right envelope. Use this
-   * instead of branching on every error code in every handler:
-   *
-   *   const result = await this.service.doThing();
-   *   return this.response.handle(result);
-   */
   handle<T>(result: ServiceResult<T>, options: { created?: boolean; message?: string } = {}) {
     switch (result.error) {
       case ERR.NONE:
@@ -124,27 +110,15 @@ export class ResponsesService {
     }
   }
 
-  /** Same as `handle`, but a success returns 201. */
   handleCreated<T>(result: ServiceResult<T>, message?: string) {
     return this.handle(result, { created: true, message });
   }
 
-  /**
-   * What a service should return from its `catch`. Recognises Prisma errors and
-   * Nest exceptions thrown by internal helpers, and falls back to a 500.
-   *
-   *   catch (e) {
-   *     return this.response.errorHandler(e);
-   *   }
-   */
   errorHandler(e: any): ServiceResult<string> {
     const prisma = mapPrismaError(e);
     if (prisma) {
-      // Always log the real Prisma message, whatever the client ends up seeing.
       this.logger.warn(`Prisma ${prisma.prismaCode ?? 'error'}: ${stringify(e?.message)}`);
 
-      // Messages that name a schema field are developer-facing. DTO validation
-      // runs first, so in production these mean a bug on our side, not bad input.
       const body =
         prisma.revealsInternals && IS_PRODUCTION
           ? 'The request could not be processed'
@@ -153,7 +127,6 @@ export class ResponsesService {
       return { error: prisma.error, body };
     }
 
-    // Guards and helpers inside services still throw — keep their status.
     if (e instanceof HttpException) {
       return { error: statusToErrorCode(e.getStatus()), body: extractHttpMessage(e) };
     }
@@ -165,8 +138,6 @@ export class ResponsesService {
 
     return { error: ERR.EXCEPTION, body: stringify(e) };
   }
-
-  // ----------------------------------------------------------- pagination
 
   pagination(page?: number, size?: number) {
     const limit = size ? Number(size) : 10;
@@ -188,9 +159,6 @@ export class ResponsesService {
     };
   }
 
-  // ----------------------------------------------------------------- cast
-
-  /** Normalises values JSON cannot represent faithfully (BigInt, Decimal, Date). */
   cast(obj: any): any {
     if (obj === null || obj === undefined) return obj;
 
@@ -200,7 +168,6 @@ export class ResponsesService {
 
     if (Array.isArray(obj)) return obj.map((value) => this.cast(value));
 
-    // Only walk plain objects — Buffers and class instances pass through.
     if (typeof obj === 'object' && isPlainObject(obj)) {
       const next: Record<string, any> = {};
       for (const key of Object.keys(obj)) next[key] = this.cast(obj[key]);
@@ -241,7 +208,6 @@ export function statusToErrorCode(status: number): ServiceErrorCode {
   }
 }
 
-/** Pulls the message out of Nest's `{ statusCode, message, error }` payload. */
 export function extractHttpMessage(e: HttpException): string {
   const response = e.getResponse();
 

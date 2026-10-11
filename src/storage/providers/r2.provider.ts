@@ -2,10 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { StorageProvider } from '@prisma/client';
 import { S3CompatibleStorageProvider } from './s3-compatible.provider';
 
-/**
- * Cloudflare R2. Buckets are not publicly readable by default — set
- * R2_PUBLIC_URL to the bucket's public r2.dev domain or your custom domain.
- */
 @Injectable()
 export class R2StorageProvider extends S3CompatibleStorageProvider {
   readonly name = StorageProvider.CLOUDFLARE_R2;

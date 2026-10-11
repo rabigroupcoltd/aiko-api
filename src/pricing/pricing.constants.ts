@@ -1,7 +1,6 @@
 import { Prisma, VehicleType } from '@prisma/client';
 import { SupportedVehicleType } from '../common/vehicle-types';
 
-
 export const DEFAULT_PRICING: Record<
   SupportedVehicleType,
   Omit<Prisma.PricingRuleCreateInput, 'vehicleType'>

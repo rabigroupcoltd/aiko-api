@@ -8,8 +8,6 @@ import { JwtStrategy } from './jwt.strategy';
 
 @Module({
   imports: [
-    // Sign-in responses carry the onboarding state, so the client knows which
-    // screen to land on without a second round trip.
     OnboardingModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
@@ -19,7 +17,6 @@ import { JwtStrategy } from './jwt.strategy';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  // JwtModule is re-exported so the WebSocket gateway can verify handshake tokens.
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

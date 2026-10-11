@@ -1,19 +1,4 @@
-/**
- * Minna landmarks — the local gazetteer.
- *
- * Ported from the mobile app, where it shipped as a bundled JSON file so
- * address search worked with no network. Seeding it into `place_cache` moves
- * that job to the server: every client gets the same list, it stays warm
- * alongside anything the Places API returns, and search keeps working before
- * GOOGLE_MAPS_API_KEY is configured at all.
- *
- * `aliases` are the names locals actually type — "kasuwa" for the central
- * market, "keke park" for the motor park. They are folded into `searchText` at
- * seed time so a plain contains-match finds them.
- */
-
 export interface MinnaLandmark {
-  /** Stable id, reused as the placeId so re-seeding is idempotent. */
   id: string;
   name: string;
   aliases: string[];
@@ -249,19 +234,11 @@ export const MINNA_LANDMARKS: MinnaLandmark[] = [
   },
 ];
 
-/** Namespaced so a seeded row can never collide with a real Google place id. */
 export const seededPlaceId = (id: string): string => `aiko:${id}`;
 
-/** What the client shows and what `Address.address` is unique on. */
 export const landmarkAddress = (landmark: MinnaLandmark): string =>
   `${landmark.name}, ${landmark.area}, Minna`;
 
-/**
- * The matchable text for one landmark.
- *
- * Name, every alias and the area, lower-cased and pipe-joined — so a contains
- * match on this column behaves like the app's local alias search did.
- */
 export const landmarkSearchText = (landmark: MinnaLandmark): string =>
   [landmark.name, ...landmark.aliases, landmark.area, 'minna']
     .join(' | ')

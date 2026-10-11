@@ -48,11 +48,9 @@ export class PricingService implements OnModuleInit {
     try {
       await this.ensureDefaults();
     } catch (e: any) {
-      // A cold database must not stop the app from booting.
       this.logger.warn(`Could not seed default pricing rules: ${e?.message}`);
     }
   }
-
 
   async ensureDefaults() {
     const existing = await this.prisma.pricingRule.findMany({
@@ -130,10 +128,8 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-
   async getActiveRule(vehicleType: VehicleType): Promise<ServiceResult<PricingRule | string>> {
     try {
-
       if (!isSupportedVehicleType(vehicleType)) {
         return badRequest(`Aiko only dispatches ${SUPPORTED_VEHICLE_TYPES.join(' and ')} right now`);
       }
@@ -165,7 +161,6 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-  /** Quotes every bookable vehicle type on one route — powers the ride-picker screen. */
   async estimateAll(dto: Omit<FareEstimateDto, 'vehicleType'>): Promise<ServiceResult> {
     try {
       const rules = await this.prisma.pricingRule.findMany({ where: { isActive: true } });
@@ -180,7 +175,6 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-  /** Pure arithmetic — no I/O, so it returns the quote directly. */
   quoteFromRule(rule: PricingRule, distanceKm: number): FareQuote {
     const durationMins = round2((distanceKm / Math.max(rule.avgSpeedKph, 1)) * 60);
 

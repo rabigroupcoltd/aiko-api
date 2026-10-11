@@ -7,13 +7,6 @@ import {
   WORKER_OPTIONS,
 } from '../queues.constants';
 
-/**
- * Widens the driver search around an unclaimed marketplace order.
- *
- * `expandSearch` is guarded and re-arms itself, so this worker only has to fire
- * the pass: an order reserved a moment before the job ran returns null and the
- * chain simply stops.
- */
 @Processor(QUEUE_ORDER_DISPATCH, WORKER_OPTIONS)
 export class OrderDispatchWorker extends WorkerHost {
   private readonly logger = new Logger(OrderDispatchWorker.name);

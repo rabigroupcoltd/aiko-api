@@ -3,25 +3,11 @@ import { ERR, ServiceErrorCode } from './response.types';
 
 export interface MappedPrismaError {
   error: ServiceErrorCode;
-  /** Message safe to return to the client. */
   body: string;
-  /** Prisma's own code, e.g. `P2002`. Null when the error carries none. */
   prismaCode: string | null;
-  /** True when the message names a schema field — do not expose these in production. */
   revealsInternals: boolean;
 }
 
-/**
- * Prisma throws one opaque multi-line error for a whole family of very
- * different problems. Two passes turn that into something usable:
- *
- *   1. `extractPrismaMessage` reads the message text. This is the only thing
- *      that works for PrismaClientValidationError, which has no code and no
- *      meta — the field name only exists in prose.
- *   2. The code table below decides the HTTP status, which the text cannot.
- *
- * Message comes from (1), status from (2).
- */
 export function mapPrismaError(e: unknown): MappedPrismaError | null {
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
     const fromCode = mapKnownRequestError(e);
@@ -39,8 +25,6 @@ export function mapPrismaError(e: unknown): MappedPrismaError | null {
     const extracted = extractPrismaMessage(e.message);
 
     return {
-      // An unknown/misspelled argument is our bug, not the caller's; a missing
-      // or wrongly typed value is something the caller can fix.
       error: extracted?.kind === 'schema-mismatch' ? ERR.EXCEPTION : ERR.BAD_REQUEST,
       body: extracted?.message ?? 'The request could not be processed — invalid field or value',
       prismaCode: null,
@@ -79,17 +63,9 @@ export function mapPrismaError(e: unknown): MappedPrismaError | null {
   return null;
 }
 
-// ------------------------------------------------------------ text patterns
-
 export interface ExtractedPrismaMessage {
   message: string;
-  /**
-   * `schema-mismatch` — the query itself is wrong (unknown/misspelled argument).
-   * `input`          — a value was missing, null or the wrong type.
-   * `constraint`     — the database rejected an otherwise valid query.
-   */
   kind: 'schema-mismatch' | 'input' | 'constraint' | 'unknown';
-  /** Message names a schema field, so it is developer-facing. */
   revealsInternals: boolean;
   prismaCode: string | null;
 }
@@ -176,19 +152,9 @@ const PATTERNS: Pattern[] = [
   },
 ];
 
-/**
- * Pulls a readable sentence out of a raw Prisma message. Returns null when
- * nothing matched, so the caller can fall back to a code-based message rather
- * than echoing a schema dump.
- *
- * Usable directly from a service or repository:
- *   const friendly = extractPrismaMessage(e.message)?.message;
- */
 export function extractPrismaMessage(raw: string): ExtractedPrismaMessage | null {
   if (!raw) return null;
 
-  // Collapse the multi-line query dump into one line, then strip the
-  // `Invalid prisma.model.op() invocation:` preamble and any stack fragment.
   const msg = raw
     .replace(/\s+/g, ' ')
     .replace(/Invalid\s+`?prisma\.[\s\S]*?invocation:?\s*/gi, '')
@@ -214,8 +180,6 @@ export function extractPrismaMessage(raw: string): ExtractedPrismaMessage | null
   return null;
 }
 
-// ------------------------------------------------------------- code mapping
-
 function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
   error: ServiceErrorCode;
   body: string;
@@ -224,7 +188,6 @@ function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
   const field = fields.length > 0 ? fields.join(', ') : 'field';
 
   switch (e.code) {
-    // ---------------------------------------------------------- connection
     case 'P1000':
     case 'P1001':
     case 'P1002':
@@ -234,7 +197,6 @@ function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
     case 'P1017':
       return { error: ERR.UNAVAILABLE, body: 'Database connection was closed, please retry' };
 
-    // ------------------------------------------------------------- values
     case 'P2000':
       return { error: ERR.BAD_REQUEST, body: `The value provided for ${field} is too long` };
     case 'P2005':
@@ -252,7 +214,6 @@ function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
     case 'P2020':
       return { error: ERR.BAD_REQUEST, body: `Value out of range for ${field}` };
 
-    // --------------------------------------------------------- constraints
     case 'P2002':
       return {
         error: ERR.CONFLICT,
@@ -274,7 +235,6 @@ function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
         body: 'This change would break a required relation between records',
       };
 
-    // ------------------------------------------------------------ missing
     case 'P2001':
     case 'P2015':
     case 'P2018':
@@ -285,14 +245,12 @@ function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
         body: modelHint(e) ?? 'The record no longer exists or was already changed',
       };
 
-    // ------------------------------------------------------- transactions
     case 'P2034':
       return {
         error: ERR.CONFLICT,
         body: 'This record is being changed by another request, please retry',
       };
 
-    // ------------------------------------------------------------- schema
     case 'P2021':
     case 'P2022':
       return { error: ERR.EXCEPTION, body: 'Database schema is out of date' };
@@ -302,7 +260,6 @@ function mapKnownRequestError(e: Prisma.PrismaClientKnownRequestError): {
   }
 }
 
-/** `meta.target` is the column list behind a unique / FK violation. */
 function targetFields(e: Prisma.PrismaClientKnownRequestError): string[] {
   const target = (e.meta as { target?: unknown } | undefined)?.target;
 
@@ -318,12 +275,10 @@ function modelHint(e: Prisma.PrismaClientKnownRequestError): string | null {
   return typeof cause === 'string' ? cause : null;
 }
 
-/** Prisma wraps field lists as ``(`email`)`` — strip the punctuation. */
 function clean(value: string): string {
   return value.replace(/[`()]/g, '').replace(/\s*,\s*/g, ', ').trim();
 }
 
-/** Prisma messages are multi-line with a schema dump — only the last line is useful. */
 function lastLine(message: string): string {
   return message.split('\n').filter(Boolean).slice(-1)[0]?.trim() || message;
 }

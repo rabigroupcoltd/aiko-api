@@ -8,17 +8,6 @@ import {
   isPlatformSettingKey,
 } from './platform-settings.constants';
 
-/**
- * Admin-editable numeric knobs, backed by `PlatformSetting` and cached in
- * memory — `getNumber` is called from the pricing hot path, so it has to be a
- * synchronous read rather than a query per fare quote.
- *
- * The cache is this service's own writes and its own boot-time load; nothing
- * else touches the table, so there is no staleness to guard against beyond
- * restarting a second instance onto rows the first one just changed — an
- * acceptable gap for a value an admin tunes rarely, not one this app assumes
- * is instantaneous across a fleet of instances.
- */
 @Injectable()
 export class PlatformSettingsService implements OnModuleInit {
   private readonly logger = new Logger(PlatformSettingsService.name);
@@ -33,13 +22,10 @@ export class PlatformSettingsService implements OnModuleInit {
     try {
       await this.ensureDefaults();
     } catch (e: any) {
-      // A cold database must not stop the app from booting — every reader
-      // falls back to the literal default while the cache is empty.
       this.logger.warn(`Could not load platform settings: ${e?.message}`);
     }
   }
 
-  /** Creates any row that has never been set, and warms the cache from what's there. */
   async ensureDefaults() {
     const existing = await this.prisma.platformSetting.findMany({
       where: { key: { in: Object.keys(PLATFORM_SETTINGS) } },
@@ -63,7 +49,6 @@ export class PlatformSettingsService implements OnModuleInit {
     }
   }
 
-  /** Synchronous — safe to call from pricing's own arithmetic, not just its I/O. */
   getNumber(key: PlatformSettingKey): number {
     return this.cache.get(key) ?? PLATFORM_SETTINGS[key].default;
   }

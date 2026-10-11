@@ -33,14 +33,6 @@ const TICKET_ID_PARAM = {
   example: SUPPORT_TICKET_EXAMPLE.id,
 } as const;
 
-/**
- * Support tickets.
- *
- * Customers and drivers raise and follow their own; admins work the queue. The
- * split is per route rather than per controller — `GET /support/:id` serves
- * both, scoped by who is asking, so there is one place where that scoping is
- * decided rather than two that can drift.
- */
 @ApiTags('Support')
 @ApiBearerAuth('bearer')
 @Controller('support')
@@ -50,8 +42,6 @@ export class SupportController {
     private support: SupportService,
     private response: ResponsesService,
   ) {}
-
-  // ------------------------------------------------------------- requester
 
   @Post()
   @ApiOperation({
@@ -88,8 +78,6 @@ export class SupportController {
     }
   }
 
-  // ------------------------------------------------------------------ admin
-
   @Get()
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPPORT')
@@ -108,8 +96,6 @@ export class SupportController {
       return this.response.exception(e);
     }
   }
-
-  // ------------------------------------------------------------------- both
 
   @Get(':id')
   @ApiOperation({

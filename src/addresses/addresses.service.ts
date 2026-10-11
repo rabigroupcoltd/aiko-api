@@ -18,11 +18,6 @@ export class AddressesService {
     private response: ResponsesService,
   ) {}
 
-  /**
-   * Cache-through search: the caller's saved addresses first, then the shared
-   * place cache, and only on a miss the Places API — whose results are written
-   * back so the next lookup is local.
-   */
   async search(userId: string, dto: SearchAddressDto): Promise<ServiceResult> {
     try {
       const limit = dto.limit ?? 10;
@@ -35,9 +30,6 @@ export class AddressesService {
           orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
         }),
         this.prisma.placeCache.findMany({
-          // `searchText` carries the local aliases, which is what makes
-          // "kasuwa" find Minna Central Market — name and address alone never
-          // would.
           where: {
             OR: [{ address: contains }, { name: contains }, { searchText: contains }],
           },
@@ -127,13 +119,10 @@ export class AddressesService {
               address: place.address,
               latitude: place.latitude,
               longitude: place.longitude,
-              // Google gives no aliases, so this is only name plus address —
-              // still worth setting, so every row is matchable the same way.
               searchText: `${place.name} | ${place.address}`.toLowerCase(),
             },
             update: { searchCount: { increment: 1 } },
           })
-          // A concurrent identical lookup can lose the placeId unique race.
           .catch(() => undefined),
       ),
     );
