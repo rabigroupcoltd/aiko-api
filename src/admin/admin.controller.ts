@@ -30,9 +30,10 @@ export class AdminController {
       'Approved drivers with their shift switched on. Position comes from the live feed or, failing that, the last saved fix — `position.recordedAt` says how fresh it is. `status`: AVAILABLE (free), BUSY (carrying orders), RESTRICTED (blocked or over the debt limit), DISCONNECTED (shift on but the app has stopped sending heartbeats).',
   })
   @ApiAdminErrors()
-  async liveDrivers() {
+  @ApiQuery({ name: 'includeOffline', required: false, type: Boolean, description: 'Also return approved drivers whose shift is off, at their last known position.' })
+  async liveDrivers(@Query('includeOffline') includeOffline?: string) {
     try {
-      return this.response.handle(await this.admin.liveDrivers());
+      return this.response.handle(await this.admin.liveDrivers(includeOffline === 'true'));
     } catch (e) {
       return this.response.exception(e);
     }

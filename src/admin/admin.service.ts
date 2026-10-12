@@ -33,10 +33,13 @@ export class AdminService {
     private settings: PlatformSettingsService,
   ) {}
 
-  async liveDrivers(): Promise<ServiceResult> {
+  async liveDrivers(includeOffline = false): Promise<ServiceResult> {
     try {
       const drivers = await this.prisma.driver.findMany({
-        where: { isAvailable: true, kycStatus: KycStatus.APPROVED },
+        where: {
+          kycStatus: KycStatus.APPROVED,
+          ...(includeOffline ? {} : { isAvailable: true }),
+        },
         include: {
           user: { select: { id: true, name: true, phone: true, profilePhotoUrl: true } },
           location: true,
@@ -95,8 +98,10 @@ export class AdminService {
           rating: driver.rating,
           heldOrders: orders,
           connected,
-          status: !connected
-            ? ('DISCONNECTED' as const)
+          status: !driver.isAvailable
+            ? ('OFFLINE' as const)
+            : !connected
+              ? ('DISCONNECTED' as const)
             : driver.isBlocked || debtLocked
               ? ('RESTRICTED' as const)
               : orders > 0
@@ -111,7 +116,12 @@ export class AdminService {
       return ok({
         generatedAt: new Date().toISOString(),
         counts: {
-          online: result.length,
+          online: result.filter((d) => d.status !== 'OFFLINE').length,
+          offline: includeOffline
+            ? count('OFFLINE')
+            : await this.prisma.driver.count({
+                where: { kycStatus: KycStatus.APPROVED, isAvailable: false },
+              }),
           available: count('AVAILABLE'),
           busy: count('BUSY'),
           restricted: count('RESTRICTED'),
