@@ -4,8 +4,11 @@ import { ResponsesService } from '../common/responses/responses.service';
 import { ServiceResult, ok } from '../common/responses/response.types';
 import {
   DRIVER_ACTIVE_STATUSES,
+  LEGACY_ACTIVE_STATUSES,
   OPEN_MARKETPLACE_STATUSES,
 } from '../dispatch/dispatch.constants';
+import { driverDebtStatus } from '../drivers/driver-debt.util';
+import { PlatformSettingsService } from '../settings/platform-settings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SUPPORTED_VEHICLE_TYPES } from '../common/vehicle-types';
 import { RedisService } from '../redis/redis.service';
@@ -27,7 +30,100 @@ export class AdminService {
     private prisma: PrismaService,
     private redis: RedisService,
     private response: ResponsesService,
+    private settings: PlatformSettingsService,
   ) {}
+
+  async liveDrivers(): Promise<ServiceResult> {
+    try {
+      const drivers = await this.prisma.driver.findMany({
+        where: { isAvailable: true, kycStatus: KycStatus.APPROVED },
+        include: {
+          user: { select: { id: true, name: true, phone: true, profilePhotoUrl: true } },
+          location: true,
+        },
+      });
+
+      const ids = drivers.map((d) => d.id);
+      const [held, live, presence] = await Promise.all([
+        ids.length
+          ? this.prisma.order.groupBy({
+              by: ['driverId'],
+              where: {
+                driverId: { in: ids },
+                status: { in: [...DRIVER_ACTIVE_STATUSES, ...LEGACY_ACTIVE_STATUSES] },
+              },
+              _count: true,
+            })
+          : [],
+        Promise.all(drivers.map((d) => this.redis.getDriverLocation(d.id, d.vehicleType).catch(() => null))),
+        Promise.all(drivers.map((d) => this.redis.isOnline(d.id).catch(() => false))),
+      ]);
+
+      const heldBy = new Map<string, number>(
+        (held as { driverId: string | null; _count: number }[]).map((row) => [row.driverId ?? '', row._count]),
+      );
+      const platformLimit = this.settings.getNumber('DRIVER_DEBT_LIMIT');
+
+      const result = drivers.map((driver, index) => {
+        const fix = live[index];
+        const position =
+          fix?.lat != null && fix.lng != null
+            ? { lat: fix.lat, lng: fix.lng, heading: fix.heading ?? null, recordedAt: fix.recordedAt, source: 'live' as const }
+            : driver.location
+              ? {
+                  lat: driver.location.latitude,
+                  lng: driver.location.longitude,
+                  heading: driver.location.heading,
+                  recordedAt: driver.location.recordedAt.toISOString(),
+                  source: 'last-known' as const,
+                }
+              : null;
+        const orders = heldBy.get(driver.id) ?? 0;
+        const connected = presence[index];
+        const debtLocked = driverDebtStatus(driver, platformLimit).locked;
+
+        return {
+          driverId: driver.id,
+          userId: driver.userId,
+          name: driver.user?.name ?? null,
+          phone: driver.user?.phone ?? null,
+          photoUrl: driver.user?.profilePhotoUrl ?? null,
+          vehicleType: driver.vehicleType,
+          vehiclePlate: driver.vehiclePlate,
+          vehicleBrand: driver.vehicleBrand,
+          vehicleModel: driver.vehicleModel,
+          rating: driver.rating,
+          heldOrders: orders,
+          connected,
+          status: !connected
+            ? ('DISCONNECTED' as const)
+            : driver.isBlocked || debtLocked
+              ? ('RESTRICTED' as const)
+              : orders > 0
+                ? ('BUSY' as const)
+                : ('AVAILABLE' as const),
+          position,
+        };
+      });
+
+      const count = (status: string) => result.filter((d) => d.status === status).length;
+
+      return ok({
+        generatedAt: new Date().toISOString(),
+        counts: {
+          online: result.length,
+          available: count('AVAILABLE'),
+          busy: count('BUSY'),
+          restricted: count('RESTRICTED'),
+          disconnected: count('DISCONNECTED'),
+          noLocation: result.filter((d) => !d.position).length,
+        },
+        drivers: result,
+      });
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
 
   async summary(): Promise<ServiceResult> {
     try {

@@ -23,6 +23,21 @@ export class AdminController {
     private response: ResponsesService,
   ) {}
 
+  @Get('live-drivers')
+  @ApiOperation({
+    summary: 'Every driver on shift, with where they are',
+    description:
+      'Approved drivers with their shift switched on. Position comes from the live feed or, failing that, the last saved fix — `position.recordedAt` says how fresh it is. `status`: AVAILABLE (free), BUSY (carrying orders), RESTRICTED (blocked or over the debt limit), DISCONNECTED (shift on but the app has stopped sending heartbeats).',
+  })
+  @ApiAdminErrors()
+  async liveDrivers() {
+    try {
+      return this.response.handle(await this.admin.liveDrivers());
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
   @Get('summary')
   @ApiOperation({
     summary: 'Dashboard headline tiles',
