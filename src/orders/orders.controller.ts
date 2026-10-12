@@ -105,6 +105,22 @@ export class OrdersController {
     }
   }
 
+  @Get('tracking')
+  @ApiOperation({
+    summary: "Your active orders and where each driver is",
+    description:
+      "Every order of yours still in progress — searching, assigned, or on the way — with its driver's name, vehicle and latest position. Orders still searching come back with `driver: null`. One call for a map of everything you're waiting on.",
+  })
+  @ApiUnauthorized()
+  async tracking(@CurrentUser('sub') userId: string) {
+    try {
+      const result = await this.ordersService.tracking(userId);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
   @Get('unread')
   @ApiOperation({
     summary: 'Unread chat messages, per order',

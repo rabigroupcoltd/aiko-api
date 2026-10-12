@@ -78,6 +78,13 @@ const DRIVER_ONLY_TRANSITIONS: OrderStatus[] = [
   OrderStatus.COMPLETED,
 ];
 
+const TRACKABLE_STATUSES: OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.SEARCHING_FOR_DRIVER,
+  ...DRIVER_ACTIVE_STATUSES,
+  ...LEGACY_ACTIVE_STATUSES,
+];
+
 const CLOSED_STATUSES: OrderStatus[] = [
   OrderStatus.COMPLETED,
   OrderStatus.DELIVERED,
@@ -384,33 +391,91 @@ export class OrdersService {
       });
       if (!driver) return ok(null);
 
-      const live = await this.redis.getDriverLocation(driver.id, driver.vehicleType);
-      if (live?.lat != null && live.lng != null) {
-        return ok({
-          driverId: driver.id,
-          lat: live.lat,
-          lng: live.lng,
-          heading: live.heading ?? null,
-          recordedAt: live.recordedAt ?? null,
-          source: 'live',
-        });
-      }
-
-      if (driver.location) {
-        return ok({
-          driverId: driver.id,
-          lat: driver.location.latitude,
-          lng: driver.location.longitude,
-          heading: driver.location.heading,
-          recordedAt: driver.location.recordedAt.toISOString(),
-          source: 'last-known',
-        });
-      }
-
-      return ok(null);
+      return ok(await this.positionOf(driver));
     } catch (e) {
       return this.response.errorHandler(e);
     }
+  }
+
+  async tracking(userId: string): Promise<ServiceResult> {
+    try {
+      const orders = await this.prisma.order.findMany({
+        where: { userId, status: { in: TRACKABLE_STATUSES } },
+        include: {
+          driver: {
+            include: {
+              location: true,
+              user: { select: { name: true, phone: true, profilePhotoUrl: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const result = await Promise.all(
+        orders.map(async (order) => {
+          const driver = order.driver;
+          return {
+            orderId: order.id,
+            status: order.status,
+            description: order.description,
+            vehicleType: order.vehicleType,
+            fare: order.fare,
+            currency: order.currency,
+            pickup: { name: order.pickupLocation, lat: order.pickupLat, lng: order.pickupLng },
+            dropoff: { name: order.dropoffLocation, lat: order.dropoffLat, lng: order.dropoffLng },
+            createdAt: order.createdAt.toISOString(),
+            driver: driver
+              ? {
+                  driverId: driver.id,
+                  name: driver.user?.name ?? null,
+                  phone: driver.user?.phone ?? null,
+                  photoUrl: driver.user?.profilePhotoUrl ?? null,
+                  vehicleType: driver.vehicleType,
+                  vehiclePlate: driver.vehiclePlate,
+                  vehicleBrand: driver.vehicleBrand,
+                  vehicleModel: driver.vehicleModel,
+                  rating: driver.rating,
+                  position: await this.positionOf(driver),
+                }
+              : null,
+          };
+        }),
+      );
+
+      return ok(result);
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
+  private async positionOf(driver: {
+    id: string;
+    vehicleType: VehicleType;
+    location: { latitude: number; longitude: number; heading: number | null; recordedAt: Date } | null;
+  }) {
+    const live = await this.redis.getDriverLocation(driver.id, driver.vehicleType).catch(() => null);
+    if (live?.lat != null && live.lng != null) {
+      return {
+        driverId: driver.id,
+        lat: live.lat,
+        lng: live.lng,
+        heading: live.heading ?? null,
+        recordedAt: live.recordedAt ?? null,
+        source: 'live' as const,
+      };
+    }
+    if (driver.location) {
+      return {
+        driverId: driver.id,
+        lat: driver.location.latitude,
+        lng: driver.location.longitude,
+        heading: driver.location.heading,
+        recordedAt: driver.location.recordedAt.toISOString(),
+        source: 'last-known' as const,
+      };
+    }
+    return null;
   }
 
   async customerEta(orderId: string, user: JwtUser): Promise<ServiceResult> {
