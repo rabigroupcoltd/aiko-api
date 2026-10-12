@@ -140,6 +140,25 @@ export class OrdersController {
     }
   }
 
+  @Get(':id/driver-location')
+  @ApiOperation({
+    summary: "Where the trip's driver is now",
+    description:
+      'The latest position of the driver assigned to this trip, from the live feed or, failing that, the last saved fix. `recordedAt` says how fresh it is. Null when no driver is assigned or the trip is over — a driver is never trackable outside an active trip. Only a participant or an admin may read it.',
+  })
+  @ApiParam(ORDER_ID_PARAM)
+  @ApiUnauthorized()
+  @ApiForbidden('You are not a participant in this trip')
+  @ApiNotFound('Order not found')
+  async driverLocation(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    try {
+      const result = await this.ordersService.driverLocation(id, user);
+      return this.response.handle(result);
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
   @Get(':id/eta')
   @ApiOperation({
     summary: 'When the driver will reach you',

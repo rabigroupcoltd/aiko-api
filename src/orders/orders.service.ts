@@ -25,6 +25,7 @@ import { DispatchService } from '../dispatch/dispatch.service';
 import {
   DRIVER_ACTIVE_STATUSES,
   INITIAL_DRIVER_RADIUS_KM,
+  LEGACY_ACTIVE_STATUSES,
   MAX_RESERVED_ORDERS_PER_DRIVER,
 } from '../dispatch/dispatch.constants';
 import { RouteOptimizerService } from '../dispatch/route-optimizer.service';
@@ -361,6 +362,52 @@ export class OrdersService {
       if (status === OrderStatus.PICKED_UP) this.events.emit('order.picked-up', updated);
 
       return ok(updated);
+    } catch (e) {
+      return this.response.errorHandler(e);
+    }
+  }
+
+  async driverLocation(orderId: string, user: JwtUser): Promise<ServiceResult> {
+    try {
+      const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+      if (!order) return notFound('Order not found');
+
+      const allowed = await this.assertParticipant(order, user);
+      if (allowed.error) return allowed;
+
+      const active = [...DRIVER_ACTIVE_STATUSES, ...LEGACY_ACTIVE_STATUSES].includes(order.status);
+      if (!order.driverId || !active) return ok(null);
+
+      const driver = await this.prisma.driver.findUnique({
+        where: { id: order.driverId },
+        include: { location: true },
+      });
+      if (!driver) return ok(null);
+
+      const live = await this.redis.getDriverLocation(driver.id, driver.vehicleType);
+      if (live?.lat != null && live.lng != null) {
+        return ok({
+          driverId: driver.id,
+          lat: live.lat,
+          lng: live.lng,
+          heading: live.heading ?? null,
+          recordedAt: live.recordedAt ?? null,
+          source: 'live',
+        });
+      }
+
+      if (driver.location) {
+        return ok({
+          driverId: driver.id,
+          lat: driver.location.latitude,
+          lng: driver.location.longitude,
+          heading: driver.location.heading,
+          recordedAt: driver.location.recordedAt.toISOString(),
+          source: 'last-known',
+        });
+      }
+
+      return ok(null);
     } catch (e) {
       return this.response.errorHandler(e);
     }
