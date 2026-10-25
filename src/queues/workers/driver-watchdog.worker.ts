@@ -11,6 +11,7 @@ import { RideEventsService } from '../../events/ride-events.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import {
+  DRIVER_WATCHDOG_IDLE_RECHECK_MS,
   DRIVER_WATCHDOG_INTERVAL_MS,
   JOB_CHECK_DRIVER_WATCHDOG,
   QUEUE_DRIVER_WATCHDOG,
@@ -28,6 +29,8 @@ interface HeldOrder {
 @Processor(QUEUE_DRIVER_WATCHDOG, WORKER_OPTIONS)
 export class DriverWatchdogWorker extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(DriverWatchdogWorker.name);
+  private lastPassHadHeldOrders = true;
+  private lastQueriedAt = 0;
 
   constructor(
     @InjectQueue(QUEUE_DRIVER_WATCHDOG) private queue: Queue,
@@ -56,6 +59,14 @@ export class DriverWatchdogWorker extends WorkerHost implements OnModuleInit {
   }
 
   async process(): Promise<{ flagged: number; cleared: number }> {
+    // A driver must be online to take an order, and heartbeats outlive one watchdog
+    // interval, so if nobody is online and nothing was held last pass, nothing new is held.
+    const idleRecheckDue = Date.now() - this.lastQueriedAt >= DRIVER_WATCHDOG_IDLE_RECHECK_MS;
+    if (!this.lastPassHadHeldOrders && !idleRecheckDue && !(await this.redis.hasAnyOnlineDriver())) {
+      return { flagged: 0, cleared: 0 };
+    }
+
+    this.lastQueriedAt = Date.now();
     const held = await this.prisma.order.findMany({
       where: {
         driverId: { not: null },
@@ -70,6 +81,7 @@ export class DriverWatchdogWorker extends WorkerHost implements OnModuleInit {
       },
     });
 
+    this.lastPassHadHeldOrders = held.length > 0;
     if (held.length === 0) return { flagged: 0, cleared: 0 };
 
     const byDriver = new Map<string, HeldOrder[]>();

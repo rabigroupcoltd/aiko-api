@@ -18,6 +18,12 @@ export const DRIVER_WATCHDOG_INTERVAL_MS = Number(
   process.env.DRIVER_WATCHDOG_INTERVAL_MS || 30_000,
 );
 
+// With no driver online and nothing held last pass, the watchdog skips Postgres so
+// Neon can scale to zero; this is the longest it goes without checking anyway.
+export const DRIVER_WATCHDOG_IDLE_RECHECK_MS = Number(
+  process.env.DRIVER_WATCHDOG_IDLE_RECHECK_MS || 60 * 60_000,
+);
+
 export const MATCHING_RETRIES = Number(process.env.MATCHING_RETRIES || 3);
 export const MATCHING_RETRY_DELAY_MS = Number(process.env.MATCHING_RETRY_DELAY_MS || 15_000);
 

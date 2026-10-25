@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AddressesModule } from './addresses/addresses.module';
+import { AccountModule } from './account/account.module';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuditModule } from './audit/audit.module';
@@ -53,6 +54,7 @@ import { WalletModule } from './wallet/wallet.module';
     AuditModule,
     SupportModule,
     AdminModule,
+    AccountModule,
 
     WorkersModule,
   ],

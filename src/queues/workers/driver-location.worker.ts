@@ -13,6 +13,8 @@ import {
 @Processor(QUEUE_DRIVER_LOCATION, WORKER_OPTIONS)
 export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(DriverLocationWorker.name);
+  // recordedAt of the fix last written per driver, so offline drivers stop costing writes.
+  private readonly flushedAt = new Map<string, string | null>();
 
   constructor(
     @InjectQueue(QUEUE_DRIVER_LOCATION) private queue: Queue,
@@ -50,8 +52,12 @@ export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
 
     const writable = locations.filter(
       (location): location is NonNullable<typeof location> =>
-        location != null && location.lat != null && location.lng != null,
+        location != null &&
+        location.lat != null &&
+        location.lng != null &&
+        (!location.recordedAt || this.flushedAt.get(location.driverId) !== location.recordedAt),
     );
+    if (writable.length === 0) return { flushed: 0 };
 
     const results = await Promise.allSettled(
       writable.map((location) =>
@@ -77,6 +83,12 @@ export class DriverLocationWorker extends WorkerHost implements OnModuleInit {
         }),
       ),
     );
+
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        this.flushedAt.set(writable[index].driverId, writable[index].recordedAt);
+      }
+    });
 
     const flushed = results.filter((result) => result.status === 'fulfilled').length;
     this.logger.debug(`Flushed ${flushed}/${writable.length} driver locations`);

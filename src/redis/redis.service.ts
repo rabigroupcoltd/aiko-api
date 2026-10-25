@@ -189,6 +189,12 @@ export class RedisService {
     return (await this.redis.exists(heartbeatKey(driverId))) === 1;
   }
 
+  async hasAnyOnlineDriver(): Promise<boolean> {
+    const tracked = await this.getAllTrackedDrivers();
+    if (tracked.length === 0) return false;
+    return (await this.redis.exists(...tracked.map(({ driverId }) => heartbeatKey(driverId)))) > 0;
+  }
+
   async flagDriverDark(driverId: string): Promise<void> {
     await this.redis.set(darkFlagKey(driverId), '1', 'EX', DARK_FLAG_TTL_SECONDS);
   }

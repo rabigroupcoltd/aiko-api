@@ -13,7 +13,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
 
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api', { exclude: ['delete-account'] });
 
   app.useGlobalPipes(
     new ValidationPipe({

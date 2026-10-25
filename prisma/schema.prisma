@@ -161,6 +161,7 @@ model User {
   livenessPassedAt DateTime?
 
   lastLoginAt DateTime?
+  deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -175,6 +176,7 @@ model User {
   ticketsRaised    SupportTicket[]  @relation("TicketRequester")
   ticketsAssigned  SupportTicket[]  @relation("TicketAssignee")
   supportMessages  SupportMessage[] @relation("SupportSender")
+  deletionRequests AccountDeletionRequest[]
 }
 
 model DeviceToken {
@@ -607,4 +609,26 @@ model SupportMessage {
   sender User          @relation("SupportSender", fields: [senderId], references: [id])
 
   @@index([ticketId, createdAt])
+}
+
+enum DeletionRequestStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
+model AccountDeletionRequest {
+  id          String                @id @default(uuid())
+  contact     String
+  userId      String?
+  reason      String?
+  source      String                @default("WEB")
+  status      DeletionRequestStatus @default(PENDING)
+  note        String?
+  processedAt DateTime?
+  createdAt   DateTime              @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
 }

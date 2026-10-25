@@ -25,15 +25,17 @@ const STAFF_WHERE: Prisma.UserWhereInput = {
 };
 
 const DIRECTORY_WHERE: Record<'PASSENGER' | 'DRIVER' | 'STAFF', Prisma.UserWhereInput> = {
-  STAFF: STAFF_WHERE,
+  STAFF: { AND: [STAFF_WHERE, { deletedAt: null }] },
   DRIVER: {
     AND: [
+      { deletedAt: null },
       { NOT: STAFF_WHERE },
       { OR: [{ accountType: AccountType.RIDER }, { driver: { isNot: null } }] },
     ],
   },
   PASSENGER: {
     AND: [
+      { deletedAt: null },
       { NOT: STAFF_WHERE },
       { driver: null },
       { OR: [{ accountType: null }, { accountType: AccountType.PASSENGER }] },

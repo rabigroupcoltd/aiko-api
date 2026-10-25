@@ -66,6 +66,17 @@ export class FirebaseService implements OnModuleInit {
     return null;
   }
 
+  async deleteUser(uid: string): Promise<void> {
+    if (!this.app) return;
+    try {
+      await getAuth(this.app).deleteUser(uid);
+    } catch (error: any) {
+      if (error?.code !== 'auth/user-not-found') {
+        this.logger.warn(`Could not delete Firebase user: ${error?.code || error?.message}`);
+      }
+    }
+  }
+
   async verifyIdToken(idToken: string): Promise<VerifyResult> {
     if (!this.app) {
       return {
