@@ -85,7 +85,7 @@ export const DELETE_ACCOUNT_PAGE = `<!doctype html>
     </section>
   </div>
 </main>
-<footer>Aiko · Minna, Niger State, Nigeria</footer>
+<footer>Aiko by Nuriq Solutions · Minna, Niger State, Nigeria<br>Questions? <a href="mailto:rabigroupcoltd@gmail.com" style="color:inherit">rabigroupcoltd@gmail.com</a> · <a href="https://aika-admin.onrender.com/privacy" style="color:inherit">Privacy Policy</a> · <a href="https://aika-admin.onrender.com/terms" style="color:inherit">Terms of Service</a></footer>
 <script>
   var form = document.getElementById('form');
   var notice = document.getElementById('notice');
