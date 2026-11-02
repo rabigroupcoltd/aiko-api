@@ -7,6 +7,7 @@ import {
   PlatformSettingKey,
   isPlatformSettingKey,
 } from './platform-settings.constants';
+import { WorkHours, workHours } from './work-hours.util';
 
 @Injectable()
 export class PlatformSettingsService implements OnModuleInit {
@@ -53,6 +54,28 @@ export class PlatformSettingsService implements OnModuleInit {
     return this.cache.get(key) ?? PLATFORM_SETTINGS[key].default;
   }
 
+  workHours(at: Date = new Date()): WorkHours {
+    return workHours(
+      this.getNumber('DRIVER_SHIFT_START_MINUTE'),
+      this.getNumber('DRIVER_SHIFT_END_MINUTE'),
+      at,
+    );
+  }
+
+  private describe(key: PlatformSettingKey, value: number, updatedAt: Date | null) {
+    const definition = PLATFORM_SETTINGS[key];
+    return {
+      key,
+      label: definition.label,
+      value,
+      min: definition.min,
+      max: definition.max,
+      format: definition.format,
+      description: definition.description,
+      updatedAt: updatedAt?.toISOString() ?? null,
+    };
+  }
+
   async findAll(): Promise<ServiceResult> {
     try {
       const rows = await this.prisma.platformSetting.findMany({
@@ -62,17 +85,9 @@ export class PlatformSettingsService implements OnModuleInit {
       const byKey = new Map(rows.map((row) => [row.key, row]));
 
       return ok(
-        (Object.keys(PLATFORM_SETTINGS) as PlatformSettingKey[]).map((key) => {
-          const row = byKey.get(key);
-          return {
-            key,
-            label: PLATFORM_SETTINGS[key].label,
-            value: this.getNumber(key),
-            min: PLATFORM_SETTINGS[key].min,
-            description: PLATFORM_SETTINGS[key].description,
-            updatedAt: row?.updatedAt.toISOString() ?? null,
-          };
-        }),
+        (Object.keys(PLATFORM_SETTINGS) as PlatformSettingKey[]).map((key) =>
+          this.describe(key, this.getNumber(key), byKey.get(key)?.updatedAt ?? null),
+        ),
       );
     } catch (e) {
       return this.response.errorHandler(e);
@@ -88,6 +103,12 @@ export class PlatformSettingsService implements OnModuleInit {
       if (value < definition.min) {
         return badRequest(`${definition.label} cannot be less than ${definition.min}`);
       }
+      if (definition.max !== null && value > definition.max) {
+        return badRequest(`${definition.label} cannot be more than ${definition.max}`);
+      }
+      if (definition.format === 'time' && !Number.isInteger(value)) {
+        return badRequest(`${definition.label} must be a whole number of minutes`);
+      }
 
       const row = await this.prisma.platformSetting.upsert({
         where: { key },
@@ -97,14 +118,7 @@ export class PlatformSettingsService implements OnModuleInit {
 
       this.cache.set(key, value);
 
-      return ok({
-        key,
-        label: definition.label,
-        value,
-        min: definition.min,
-        description: definition.description,
-        updatedAt: row.updatedAt.toISOString(),
-      });
+      return ok(this.describe(key, value, row.updatedAt));
     } catch (e) {
       return this.response.errorHandler(e);
     }

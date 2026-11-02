@@ -66,6 +66,7 @@ export class AdminService {
         (held as { driverId: string | null; _count: number }[]).map((row) => [row.driverId ?? '', row._count]),
       );
       const platformLimit = this.settings.getNumber('DRIVER_DEBT_LIMIT');
+      const hours = this.settings.workHours();
 
       const result = drivers.map((driver, index) => {
         const fix = live[index];
@@ -106,7 +107,9 @@ export class AdminService {
               ? ('RESTRICTED' as const)
               : orders > 0
                 ? ('BUSY' as const)
-                : ('AVAILABLE' as const),
+                : !hours.open
+                  ? ('RESTRICTED' as const)
+                  : ('AVAILABLE' as const),
           position,
         };
       });
@@ -115,6 +118,7 @@ export class AdminService {
 
       return ok({
         generatedAt: new Date().toISOString(),
+        workHours: hours,
         counts: {
           online: result.filter((d) => d.status !== 'OFFLINE').length,
           offline: includeOffline

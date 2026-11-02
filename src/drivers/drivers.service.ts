@@ -33,6 +33,7 @@ import { DriverLocationDto, NearbyDriversQueryDto } from '../redis/dto/driver-lo
 import { HEARTBEAT_TTL_SECONDS } from '../redis/redis.keys';
 import { RedisService } from '../redis/redis.service';
 import { PlatformSettingsService } from '../settings/platform-settings.service';
+import { formatMinuteOfDay12h } from '../settings/work-hours.util';
 import { StorageService } from '../storage/storage.service';
 import { UploadFile } from '../storage/storage.types';
 import { DriverDebtStatus, driverDebtStatus } from './driver-debt.util';
@@ -65,6 +66,11 @@ export class DriversService {
     const debt = this.debtStatus(driver);
     if (debt.locked) {
       return `You owe ₦${debt.current.toLocaleString()} in commission, which has reached your limit of ₦${debt.limit.toLocaleString()}. Pay it to an admin to start taking trips again.`;
+    }
+
+    const hours = this.settings.workHours();
+    if (!hours.open) {
+      return `Drivers can only work between ${formatMinuteOfDay12h(hours.startMinute)} and ${formatMinuteOfDay12h(hours.endMinute)} (Lagos time).`;
     }
     return null;
   }
@@ -638,6 +644,7 @@ export class DriversService {
         canGoOnline: blockReason === null,
         blockReason,
         debt,
+        workHours: this.settings.workHours(),
 
         held: heldCount + legacyCount,
         capacity: MAX_RESERVED_ORDERS_PER_DRIVER,
