@@ -21,13 +21,18 @@ export class QueuesService {
     @InjectQueue(QUEUE_ORDER_DISPATCH) private dispatchQueue: Queue,
   ) {}
 
-  async scheduleOrderExpansion(orderId: string, attempt: number, delayMs: number) {
+  async scheduleOrderExpansion(
+    orderId: string,
+    attempt: number,
+    delayMs: number,
+    startedAt: number,
+  ) {
     await this.dispatchQueue.add(
       JOB_EXPAND_ORDER_SEARCH,
-      { orderId, attempt },
+      { orderId, attempt, startedAt },
       {
         delay: delayMs,
-        jobId: `dispatch:${orderId}:${attempt}`,
+        jobId: `dispatch:${orderId}:${startedAt}:${attempt}`,
         removeOnComplete: true,
         removeOnFail: 100,
       },

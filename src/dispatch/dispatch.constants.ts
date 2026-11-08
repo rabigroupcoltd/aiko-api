@@ -12,7 +12,6 @@ export const RADIUS_EXPANSION_FACTOR = Number(process.env.RADIUS_EXPANSION_FACTO
 
 export const DISPATCH_EXPAND_DELAY_MS = Number(process.env.DISPATCH_EXPAND_DELAY_MS || 45_000);
 
-export const MAX_DISPATCH_ATTEMPTS = Number(process.env.MAX_DISPATCH_ATTEMPTS || 3);
 
 export const MAX_ROUTE_DETOUR_KM = Number(process.env.MAX_ROUTE_DETOUR_KM || 3);
 
@@ -21,6 +20,12 @@ export const MAX_ROUTE_DETOUR_PERCENT = Number(process.env.MAX_ROUTE_DETOUR_PERC
 export const MAX_EXISTING_ORDER_DELAY_MINUTES = Number(
   process.env.MAX_EXISTING_ORDER_DELAY_MINUTES || 8,
 );
+
+// How long a rider has to hand back an order an admin assigned to them.
+export const ASSIGNMENT_DECLINE_MINUTES = Number(process.env.ASSIGNMENT_DECLINE_MINUTES || 5);
+
+// How long after closing as NO_DRIVER_FOUND an admin can still revive an order.
+export const NO_DRIVER_REVIVE_MINUTES = Number(process.env.NO_DRIVER_REVIVE_MINUTES || 15);
 
 export const SKIP_COOLDOWN_MINUTES = Number(process.env.SKIP_COOLDOWN_MINUTES || 0);
 
@@ -68,4 +73,5 @@ export const MARKETPLACE_CONFIG = {
   maxExistingOrderDelayMinutes: MAX_EXISTING_ORDER_DELAY_MINUTES,
   allowIncompatibleReservation: ALLOW_INCOMPATIBLE_RESERVATION,
   skipCooldownMinutes: SKIP_COOLDOWN_MINUTES,
+  assignmentDeclineMinutes: ASSIGNMENT_DECLINE_MINUTES,
 } as const;

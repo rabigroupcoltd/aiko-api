@@ -44,6 +44,15 @@ export const PLATFORM_SETTINGS = {
     max: 24 * 60 - 1,
     format: 'time',
   },
+  DISPATCH_SEARCH_MINUTES: {
+    label: 'Rider search time',
+    description:
+      'How long an order keeps looking for a rider before it closes as "No driver found". While it searches, the radius widens to its limit and riders who come online are offered it, and admins can assign a rider by hand. Restarts when an admin revives an order or a rider hands an assigned order back.',
+    default: Number(process.env.DISPATCH_SEARCH_MINUTES || 10),
+    min: 1,
+    max: 120,
+    format: 'number',
+  },
 } as const;
 
 export type PlatformSettingKey = keyof typeof PLATFORM_SETTINGS;

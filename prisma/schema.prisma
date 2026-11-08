@@ -405,6 +405,15 @@ model Order {
   cancelledAt        DateTime?
   searchRadiusKm     Float?
   dispatchAttempts   Int           @default(0)
+  // When the current search began — reset when an admin revives the order or a
+  // rider hands an assigned order back, so the search timeout restarts.
+  searchStartedAt    DateTime?
+  // Set when an admin assigned the order rather than a rider claiming it.
+  assignedById       String?
+  assignedAt         DateTime?
+  // The last rider who handed an admin-assigned order back.
+  declinedByDriverId String?
+  declinedAt         DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 

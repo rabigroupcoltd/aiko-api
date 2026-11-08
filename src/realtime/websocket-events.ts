@@ -33,6 +33,11 @@ export const WEBSOCKET_ROOMS = [
       'On connect for a trip already assigned, and server-side the moment a driver reserves your order.',
     purpose: 'Live position feed for one driver.',
   },
+  {
+    room: 'admin',
+    joined: 'On connect, if the token carries the ADMIN role.',
+    purpose: 'The admin dashboard: every order change and every rider position, platform-wide.',
+  },
 ];
 
 export const GRID_NOTIFICATIONS: NotificationDoc[] = [
@@ -65,10 +70,11 @@ export const GRID_NOTIFICATIONS: NotificationDoc[] = [
   {
     code: INFO_CODES.REQUEST_WON,
     summary:
-      'You claimed it first. Redundant with the 200 from the reserve call, and deliberately so — that response can be lost to a dropped connection at the exact moment the order became yours.',
+      'You claimed it first — or an admin assigned it to you (`assignedByAdmin: true`, message "Aiko assigned you a delivery"). For a claim this is redundant with the 200 from the reserve call, and deliberately so — that response can be lost to a dropped connection at the exact moment the order became yours.',
     audience: '`driver:<driverId>` — the winner only',
-    payload: '`{ order }` — the full Order, now RESERVED and assigned to you',
-    action: 'Remove the card and open the trip.',
+    payload: '`{ order, assignedByAdmin }` — the full Order, now RESERVED and assigned to you',
+    action:
+      'Remove the card and open the trip. When `assignedByAdmin` is true, tell the rider it was assigned to them and offer to hand it back (POST /marketplace/orders/:id/release).',
     example: {
       code: 'REQUEST_WON',
       message: 'The request is yours',
@@ -129,7 +135,7 @@ export const TRIP_NOTIFICATIONS: NotificationDoc[] = [
   {
     code: INFO_CODES.ORDER_NO_DRIVER,
     summary:
-      'The search widened to MAX_DRIVER_RADIUS_KM across MAX_DISPATCH_ATTEMPTS passes and nobody claimed it. Terminal.',
+      'Nobody claimed it within DISPATCH_SEARCH_MINUTES (an admin setting). An admin can still revive and assign it for NO_DRIVER_REVIVE_MINUTES afterwards.',
     audience: '`user:<customerId>`',
     payload: '`{ order }` at NO_DRIVER_FOUND',
     action: 'Offer to re-book.',
@@ -181,7 +187,43 @@ export const TRIP_NOTIFICATIONS: NotificationDoc[] = [
   },
 ];
 
-export const ALL_NOTIFICATIONS = [...GRID_NOTIFICATIONS, ...TRIP_NOTIFICATIONS];
+export const ADMIN_NOTIFICATIONS: NotificationDoc[] = [
+  {
+    code: INFO_CODES.ADMIN_ORDER,
+    summary:
+      'An order changed anywhere on the platform. `event` is CREATED, ACCEPTED, RESERVED, STATUS_CHANGED, CANCELLED, NO_DRIVER_FOUND or ASSIGNMENT_DECLINED.',
+    audience: '`admin`',
+    payload:
+      '`{ event, order: { id, status, driverId, vehicleType, pickupLocation, dropoffLocation }, assignedByAdmin }`',
+    action: 'Refresh the order lists, the needs-a-rider panel and the summary counts.',
+    example: {
+      code: 'ADMIN_ORDER',
+      message: 'Order no driver found',
+      data: {
+        event: 'NO_DRIVER_FOUND',
+        order: { id: '9c7e2a41-3b08-4f6d-95a2-7e1c4d8b0f33', status: 'NO_DRIVER_FOUND', driverId: null },
+        assignedByAdmin: false,
+      },
+    },
+  },
+  {
+    code: INFO_CODES.ADMIN_DRIVER_LOCATION,
+    summary: 'A rider moved. At most one per rider every ADMIN_LOCATION_THROTTLE_MS (2.5 s by default).',
+    audience: '`admin`',
+    payload: '`{ driverId, lat, lng, heading, recordedAt }`',
+    action: 'Move the rider on the live map.',
+  },
+  {
+    code: INFO_CODES.ADMIN_DRIVER_STATUS,
+    summary:
+      'A rider became free for work (`AVAILABLE`, at most every 15 s per rider), switched their shift off (`OFFLINE`), or stopped sending heartbeats mid-shift (`WENT_DARK`).',
+    audience: '`admin`',
+    payload: '`{ driverId, change }`',
+    action: 'Refresh the live map and rider counts.',
+  },
+];
+
+export const ALL_NOTIFICATIONS = [...GRID_NOTIFICATIONS, ...TRIP_NOTIFICATIONS, ...ADMIN_NOTIFICATIONS];
 
 export const ERROR_NOTIFICATIONS: NotificationDoc[] = [
   {
@@ -320,6 +362,11 @@ export function renderWebSocketReference(): string {
   lines.push('### Trips, chat and position');
   lines.push('');
   lines.push(table(['Code', 'Goes to', '`data`', 'Do this'], notificationRows(TRIP_NOTIFICATIONS)));
+  lines.push('');
+
+  lines.push('### Admin dashboard');
+  lines.push('');
+  lines.push(table(['Code', 'Goes to', '`data`', 'Do this'], notificationRows(ADMIN_NOTIFICATIONS)));
   lines.push('');
 
   lines.push('### Errors');

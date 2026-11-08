@@ -33,6 +33,7 @@ export class RideNotificationsService implements OnModuleInit {
     this.subscribe('order.picked-up', (payload) => this.onOrderPickedUp(payload));
     this.subscribe('order.delivered', (payload) => this.onOrderDelivered(payload));
     this.subscribe('order.no-driver-found', (payload) => this.onNoDriverFound(payload));
+    this.subscribe('order.assignment-declined', (payload) => this.onAssignmentDeclined(payload));
     this.subscribe('driver.went-dark', (payload) => this.onDriverWentDark(payload));
 
     this.subscribe('order.reserved', (payload) =>
@@ -101,9 +102,22 @@ export class RideNotificationsService implements OnModuleInit {
     order: any;
     eta?: { pickupMinutes: number | null } | null;
     heldByDriver?: number;
+    assignedByAdmin?: boolean;
   }) {
     const order = payload?.order;
     if (!order?.driverId) return;
+
+    if (payload.assignedByAdmin) {
+      // The rider did not ask for this one, so it has to be loud enough to notice.
+      await this.push.sendToDrivers([order.driverId], {
+        type: PUSH_TYPES.ORDER_ASSIGNED,
+        title: `Aiko assigned you a delivery · ${money(order.driverEarnings, order.currency)}`,
+        body: `${order.pickupLocation} → ${order.dropoffLocation}`,
+        collapseKey: `order:${order.id}:driver`,
+        ttlSeconds: TRIP_TTL_SECONDS,
+        data: { dedupeKey: `order-assigned:${order.id}`, orderId: order.id },
+      });
+    }
 
     const driver = order.driver;
     const driverName = driver?.user?.name?.split(' ')[0] ?? 'Your driver';
@@ -132,6 +146,20 @@ export class RideNotificationsService implements OnModuleInit {
         pickupEtaMinutes: pickupMinutes ?? null,
         driverHandlingOtherOrders: (payload.heldByDriver ?? 1) > 1,
       },
+    });
+  }
+
+  private async onAssignmentDeclined(payload: { order: any }) {
+    const order = payload?.order;
+    if (!order?.userId) return;
+
+    await this.push.sendToUsers([order.userId], {
+      type: PUSH_TYPES.ORDER_RELEASED,
+      title: 'Finding you another rider',
+      body: 'Your rider could not make it. We are finding someone else now.',
+      collapseKey: `order:${order.id}`,
+      ttlSeconds: TRIP_TTL_SECONDS,
+      data: { dedupeKey: `order-released:${order.id}:${Date.now()}`, orderId: order.id },
     });
   }
 

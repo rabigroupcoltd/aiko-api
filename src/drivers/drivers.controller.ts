@@ -183,7 +183,7 @@ export class DriversController {
     vehicleType: 'TRICYCLE',
     status: 'AVAILABLE',
     isAvailable: true,
-    presence: { online: true, heartbeatTtlSeconds: 90 },
+    presence: { online: true, heartbeatTtlSeconds: 120 },
     kycStatus: 'APPROVED',
     isBlocked: false,
     canGoOnline: true,
@@ -272,7 +272,7 @@ export class DriversController {
       'Refreshes the presence TTL. A position fix does this as a side effect, so this is for the driver who is parked, waiting, or indoors with a poor GPS lock and has no new fix worth sending — it costs two keys rather than a whole geo write. Without it they silently drop out of the pool after DRIVER_HEARTBEAT_TTL seconds while the app still says "online".',
   })
   @ApiOkEnvelope(
-    { driverId: DRIVER_EXAMPLE.id, online: true, expiresInSeconds: 90 },
+    { driverId: DRIVER_EXAMPLE.id, online: true, expiresInSeconds: 120 },
     { message: 'Heartbeat received' },
   )
   @ApiUnauthorized()

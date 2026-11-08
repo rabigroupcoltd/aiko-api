@@ -203,14 +203,23 @@ export class MarketplaceService {
     }
   }
 
-  private async claim(orderId: string, driverId: string): Promise<'OK' | 'TAKEN' | 'CAPACITY'> {
+  /**
+   * The one place an order changes hands, for riders reserving and admins
+   * assigning alike. Locks the driver row so two claims cannot both slip under
+   * the capacity limit, and only takes an order still open with no driver.
+   */
+  async claim(
+    orderId: string,
+    driverId: string,
+    options: { assignedById?: string; ignoreCapacity?: boolean } = {},
+  ): Promise<'OK' | 'TAKEN' | 'CAPACITY'> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${driverId} FOR UPDATE`;
 
       const held = await tx.order.count({
         where: { driverId, status: { in: DRIVER_ACTIVE_STATUSES } },
       });
-      if (held >= MAX_RESERVED_ORDERS_PER_DRIVER) return 'CAPACITY';
+      if (held >= MAX_RESERVED_ORDERS_PER_DRIVER && !options.ignoreCapacity) return 'CAPACITY';
 
       const now = new Date();
 
@@ -221,6 +230,8 @@ export class MarketplaceService {
           status: OrderStatus.RESERVED,
           reservedAt: now,
           acceptedAt: now,
+          assignedById: options.assignedById ?? null,
+          assignedAt: options.assignedById ? now : null,
         },
       });
 

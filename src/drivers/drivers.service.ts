@@ -514,6 +514,8 @@ export class DriversService {
 
       const updated = await this.prisma.driver.update({ where: { id }, data: { isAvailable } });
 
+      if (!isAvailable) this.events.emit('driver.unavailable', { driverId: id });
+
       if (isAvailable) {
         const position = await this.redis.getDriverLocation(id, driver.vehicleType);
         this.announceAvailable(updated, position?.lat ?? null, position?.lng ?? null);

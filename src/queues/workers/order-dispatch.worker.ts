@@ -15,9 +15,9 @@ export class OrderDispatchWorker extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ orderId: string; attempt: number }>) {
-    const { orderId, attempt } = job.data;
-    const targets = await this.dispatch.expandSearch(orderId, attempt);
+  async process(job: Job<{ orderId: string; attempt: number; startedAt?: number }>) {
+    const { orderId, attempt, startedAt } = job.data;
+    const targets = await this.dispatch.expandSearch(orderId, attempt, startedAt);
 
     if (targets === null) {
       this.logger.debug(`Order ${orderId} no longer open — dispatch chain stopped`);

@@ -27,7 +27,22 @@ import {
   socketError,
 } from '../realtime/notification-codes';
 import { RedisService } from '../redis/redis.service';
-import { driverRoom, driverWatchRoom, rideRoom, userRoom } from './ride.rooms';
+import { ADMIN_ROOM, driverRoom, driverWatchRoom, rideRoom, userRoom } from './ride.rooms';
+
+/** The order events admins hear about, and the name the dashboard sees for each. */
+const ADMIN_ORDER_EVENTS: [string, string][] = [
+  ['order.created', 'CREATED'],
+  ['order.accepted', 'ACCEPTED'],
+  ['order.reserved', 'RESERVED'],
+  ['order.status-changed', 'STATUS_CHANGED'],
+  ['order.cancelled', 'CANCELLED'],
+  ['order.no-driver-found', 'NO_DRIVER_FOUND'],
+  ['order.assignment-declined', 'ASSIGNMENT_DECLINED'],
+];
+
+// Riders send a fix every few seconds; admins need far less to draw a smooth map.
+const ADMIN_LOCATION_THROTTLE_MS = Number(process.env.ADMIN_LOCATION_THROTTLE_MS || 2500);
+const ADMIN_AVAILABLE_THROTTLE_MS = 15_000;
 
 interface SocketUser extends JwtUser {
   driverId?: string;
@@ -42,6 +57,8 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   server: Server;
 
   private readonly logger = new Logger(RideGateway.name);
+  private readonly adminLocationSentAt = new Map<string, number>();
+  private readonly adminAvailableSentAt = new Map<string, number>();
 
   constructor(
     private jwt: JwtService,
@@ -53,6 +70,7 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   afterInit() {
     this.wireDriverGrid();
     this.wireTrips();
+    this.wireAdmin();
     this.logger.log('Ride gateway initialised — notifications only, no client events');
   }
 
@@ -70,7 +88,7 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     });
 
     this.events.on<any>('order.reserved').subscribe(({ payload }) => {
-      const { order, driverId, eta } = payload;
+      const { order, driverId, eta, assignedByAdmin } = payload;
       if (!order) return;
 
       this.toUser(
@@ -79,7 +97,14 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       );
       this.watchDriver(order.userId, driverId);
 
-      this.toDriver(driverId, info(INFO_CODES.REQUEST_WON, 'The request is yours', { order }));
+      this.toDriver(
+        driverId,
+        info(
+          INFO_CODES.REQUEST_WON,
+          assignedByAdmin ? 'Aiko assigned you a delivery' : 'The request is yours',
+          { order, assignedByAdmin: Boolean(assignedByAdmin) },
+        ),
+      );
 
       void this.closeCard(order.id, REMOVAL_REASONS.TAKEN, driverId);
     });
@@ -165,6 +190,91 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     });
   }
 
+  /**
+   * The admin dashboard's feed. Slim payloads: enough to place a rider on the
+   * map or to know which lists to refresh, never full customer records.
+   */
+  private wireAdmin() {
+    for (const [name, event] of ADMIN_ORDER_EVENTS) {
+      this.events.on<any>(name as any).subscribe(({ payload }) => {
+        const order = payload?.order ?? payload;
+        if (!order?.id) return;
+        this.toAdmins(
+          info(INFO_CODES.ADMIN_ORDER, `Order ${event.toLowerCase().replace(/_/g, ' ')}`, {
+            event,
+            order: {
+              id: order.id,
+              status: order.status ?? null,
+              driverId: order.driverId ?? null,
+              vehicleType: order.vehicleType ?? null,
+              pickupLocation: order.pickupLocation ?? null,
+              dropoffLocation: order.dropoffLocation ?? null,
+            },
+            assignedByAdmin: Boolean(payload?.assignedByAdmin),
+          }),
+        );
+      });
+    }
+
+    this.events.on<any>('driver.location').subscribe(({ payload }) => {
+      if (!payload?.driverId) return;
+      if (!this.throttle(this.adminLocationSentAt, payload.driverId, ADMIN_LOCATION_THROTTLE_MS)) return;
+      this.toAdmins(
+        info(INFO_CODES.ADMIN_DRIVER_LOCATION, 'Rider moved', {
+          driverId: payload.driverId,
+          lat: payload.lat,
+          lng: payload.lng,
+          heading: payload.heading ?? null,
+          recordedAt: payload.recordedAt ?? new Date().toISOString(),
+        }),
+      );
+    });
+
+    this.events.on<any>('driver.available').subscribe(({ payload }) => {
+      if (!payload?.driverId) return;
+      if (!this.throttle(this.adminAvailableSentAt, payload.driverId, ADMIN_AVAILABLE_THROTTLE_MS)) return;
+      this.toAdmins(
+        info(INFO_CODES.ADMIN_DRIVER_STATUS, 'Rider available', {
+          driverId: payload.driverId,
+          change: 'AVAILABLE',
+        }),
+      );
+    });
+
+    this.events.on<any>('driver.unavailable').subscribe(({ payload }) => {
+      if (!payload?.driverId) return;
+      this.toAdmins(
+        info(INFO_CODES.ADMIN_DRIVER_STATUS, 'Rider went offline', {
+          driverId: payload.driverId,
+          change: 'OFFLINE',
+        }),
+      );
+    });
+
+    this.events.on<any>('driver.went-dark').subscribe(({ payload }) => {
+      if (!payload?.driverId) return;
+      this.toAdmins(
+        info(INFO_CODES.ADMIN_DRIVER_STATUS, 'Rider lost connection', {
+          driverId: payload.driverId,
+          change: 'WENT_DARK',
+        }),
+      );
+    });
+  }
+
+  private throttle(sentAt: Map<string, number>, key: string, ms: number): boolean {
+    const now = Date.now();
+    const last = sentAt.get(key) ?? 0;
+    if (now - last < ms) return false;
+    sentAt.set(key, now);
+    if (sentAt.size > 5000) sentAt.clear();
+    return true;
+  }
+
+  private toAdmins(envelope: InfoEnvelope) {
+    this.server.to(ADMIN_ROOM).emit(SOCKET_EVENTS.INFO, envelope);
+  }
+
   private broadcastTrip(order: any) {
     if (!order) return;
     if (order.status === OrderStatus.CANCELLED) return;
@@ -231,6 +341,7 @@ export class RideGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
       await client.join(userRoom(user.sub));
       if (user.driverId) await client.join(driverRoom(user.driverId));
+      if (user.roles?.includes('ADMIN')) await client.join(ADMIN_ROOM);
       await this.joinActiveTrips(client, user);
 
       client.emit(SOCKET_EVENTS.CONNECTED, {

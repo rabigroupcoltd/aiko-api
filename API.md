@@ -1369,7 +1369,7 @@ most:
 | `SEARCH_RADIUS_KM` | `5` | Default driver search radius |
 | `RIDE_REQUEST_TTL` | `120` | Seconds before a request expires |
 | `ALLOW_BID_FARE_OVERRIDE` | `false` | Let an accepted bid set the fare |
-| `DRIVER_HEARTBEAT_TTL` | `15` | Seconds before a driver counts as offline |
+| `DRIVER_HEARTBEAT_TTL` | `120` | Seconds without a location or heartbeat before a driver counts as disconnected. The app sends a fix every 20 s, even minimised |
 | `MIN_WITHDRAWAL` | `500` | Smallest withdrawal |
 | `GOOGLE_MAPS_API_KEY` | — | Blank disables remote place lookup |
 

@@ -18,6 +18,8 @@ import {
 } from '../common/swagger/examples';
 import { MARKETPLACE_CONFIG } from './dispatch.constants';
 import { MarketplaceQueryDto } from './dto/marketplace.dto';
+import { AdminDispatchService } from './admin-dispatch.service';
+import { ASSIGNMENT_DECLINE_MINUTES } from './dispatch.constants';
 import { MarketplaceService } from './marketplace.service';
 
 const ORDER_ID_PARAM = {
@@ -33,6 +35,7 @@ const ORDER_ID_PARAM = {
 export class MarketplaceController {
   constructor(
     private marketplace: MarketplaceService,
+    private adminDispatch: AdminDispatchService,
     private response: ResponsesService,
   ) {}
 
@@ -84,6 +87,25 @@ export class MarketplaceController {
     try {
       const result = await this.marketplace.reserve(id, userId);
       return this.response.handle(result, { message: 'Order reserved' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('orders/:id/release')
+  @ApiOperation({
+    summary: 'Hand back an order an admin assigned',
+    description: `For orders an admin gave this rider: within ${ASSIGNMENT_DECLINE_MINUTES} minutes and before heading to pickup, the rider can hand it back. It goes back on the market for everyone else, the customer is told a new rider is being found, and admins see it as declined.`,
+  })
+  @ApiParam(ORDER_ID_PARAM)
+  @ApiOkEnvelope({ orderId: ORDER_ID_PARAM.example, released: true })
+  @ApiValidationError('You can only hand back an order Aiko assigned to you')
+  @ApiUnauthorized()
+  @ApiNotFound('Order not found')
+  async release(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+    try {
+      const result = await this.adminDispatch.release(id, userId);
+      return this.response.handle(result, { message: 'Order handed back' });
     } catch (e) {
       return this.response.exception(e);
     }

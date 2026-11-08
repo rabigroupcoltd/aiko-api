@@ -6,15 +6,19 @@ import { RideEventsService } from '../events/ride-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { RedisService } from '../redis/redis.service';
+import { PlatformSettingsService } from '../settings/platform-settings.service';
 import {
   DRIVER_ACTIVE_STATUSES,
   DISPATCH_EXPAND_DELAY_MS,
   INITIAL_DRIVER_RADIUS_KM,
-  MAX_DISPATCH_ATTEMPTS,
   MAX_DRIVER_RADIUS_KM,
   MAX_RESERVED_ORDERS_PER_DRIVER,
   RADIUS_EXPANSION_FACTOR,
 } from './dispatch.constants';
+
+function searchStart(order: Pick<Order, 'searchStartedAt' | 'createdAt'>): Date {
+  return order.searchStartedAt ?? order.createdAt;
+}
 
 export interface DispatchTarget {
   driverId: string;
@@ -40,6 +44,7 @@ export class DispatchService implements OnModuleInit {
     private events: RideEventsService,
     private queues: QueuesService,
     private redis: RedisService,
+    private settings: PlatformSettingsService,
   ) {}
 
   onModuleInit() {
@@ -56,7 +61,12 @@ export class DispatchService implements OnModuleInit {
     const targets = await this.eligibleDrivers(order, radiusKm);
     await this.announce(order, targets, radiusKm);
 
-    await this.queues.scheduleOrderExpansion(order.id, 1, DISPATCH_EXPAND_DELAY_MS);
+    await this.queues.scheduleOrderExpansion(
+      order.id,
+      1,
+      DISPATCH_EXPAND_DELAY_MS,
+      searchStart(order).getTime(),
+    );
 
     this.logger.log(
       `Order ${order.id} dispatched to ${targets.length} driver(s) within ${radiusKm} km`,
@@ -96,19 +106,34 @@ export class DispatchService implements OnModuleInit {
     return fresh;
   }
 
-  async expandSearch(orderId: string, attempt: number): Promise<DispatchTarget[] | null> {
+  /**
+   * One tick of an order's search. The radius widens each tick until it reaches
+   * MAX_DRIVER_RADIUS_KM, then ticks keep offering it to riders who have come
+   * into range, until DISPATCH_SEARCH_MINUTES have passed since the search began.
+   *
+   * `startedAt` ties a queued tick to one search. Reviving an order or a rider
+   * handing it back starts a new search, and ticks left over from the old one
+   * stop themselves here instead of running alongside the new chain.
+   */
+  async expandSearch(
+    orderId: string,
+    attempt: number,
+    startedAt?: number,
+  ): Promise<DispatchTarget[] | null> {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
 
     if (!order) return null;
     if (order.status !== OrderStatus.SEARCHING_FOR_DRIVER || order.driverId) return null;
+    if (startedAt != null && searchStart(order).getTime() !== startedAt) return null;
 
-    const previous = order.searchRadiusKm ?? INITIAL_DRIVER_RADIUS_KM;
-    const widened = Math.min(previous * RADIUS_EXPANSION_FACTOR, MAX_DRIVER_RADIUS_KM);
-
-    if (attempt > MAX_DISPATCH_ATTEMPTS || previous >= MAX_DRIVER_RADIUS_KM) {
+    const searchMs = this.settings.getNumber('DISPATCH_SEARCH_MINUTES') * 60_000;
+    if (Date.now() - searchStart(order).getTime() >= searchMs) {
       await this.giveUp(order);
       return null;
     }
+
+    const previous = order.searchRadiusKm ?? INITIAL_DRIVER_RADIUS_KM;
+    const widened = Math.min(previous * RADIUS_EXPANSION_FACTOR, MAX_DRIVER_RADIUS_KM);
 
     const updated = await this.prisma.order.update({
       where: { id: orderId },
@@ -118,14 +143,41 @@ export class DispatchService implements OnModuleInit {
     const targets = await this.eligibleDrivers(updated, widened);
     const fresh = await this.announce(updated, targets, widened);
 
-    await this.queues.scheduleOrderExpansion(orderId, attempt + 1, DISPATCH_EXPAND_DELAY_MS);
+    await this.queues.scheduleOrderExpansion(
+      orderId,
+      attempt + 1,
+      DISPATCH_EXPAND_DELAY_MS,
+      searchStart(updated).getTime(),
+    );
 
     this.logger.log(
-      `Order ${orderId} widened to ${widened} km on attempt ${attempt} — ` +
+      `Order ${orderId} search tick ${attempt} at ${widened} km — ` +
         `${targets.length} eligible, ${fresh.length} newly notified`,
     );
 
     return fresh;
+  }
+
+  /**
+   * Start a fresh search for an order that is back on the market — revived by
+   * an admin or handed back by a rider. Riders already told about it are told
+   * again, except `excludeDriverId` (the rider who just handed it back).
+   */
+  async restartSearch(order: Order, excludeDriverId?: string): Promise<DispatchTarget[]> {
+    const offered = await this.redis.takeOfferedDrivers(order.id);
+    const forget = offered.filter((driverId) => driverId !== excludeDriverId);
+    if (forget.length) {
+      await this.redis.client.del(...forget.map((driverId) => announcedKey(driverId, order.id)));
+    }
+    if (excludeDriverId) {
+      await this.redis.client.set(
+        announcedKey(excludeDriverId, order.id),
+        '1',
+        'EX',
+        ANNOUNCE_MEMORY_SECONDS,
+      );
+    }
+    return this.dispatch(order);
   }
 
   private async giveUp(order: Order): Promise<void> {
