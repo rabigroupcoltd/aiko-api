@@ -22,7 +22,8 @@ import {
 } from '../common/swagger/examples';
 import { imageFilePipe, imageUploadOptions } from '../common/upload';
 import { UploadFile } from '../storage/storage.types';
-import { UpdateOnboardingDto } from './dto/onboarding.dto';
+import { AccountType } from '@prisma/client';
+import { SwitchModeDto, UpdateOnboardingDto } from './dto/onboarding.dto';
 import { OnboardingService } from './onboarding.service';
 
 @ApiTags('Onboarding')
@@ -113,6 +114,25 @@ export class OnboardingController {
     try {
       const result = await this.onboardingService.uploadPhoto(userId, photo);
       return this.response.handle(result, { message: 'Onboarding updated' });
+    } catch (e) {
+      return this.response.exception(e);
+    }
+  }
+
+  @Post('mode')
+  @ApiOperation({
+    summary: 'Switch between ordering and riding',
+    description:
+      'For a user who has finished onboarding. RIDER with no rider profile leads into the rider documents (`resumeStep: RIDER_DOCS`), then admin approval; with an approved profile it goes straight to the rider home. PASSENGER takes an online rider offline first, and is refused while they hold active deliveries. Returns the recomputed onboarding state.',
+  })
+  @ApiOkEnvelope(ONBOARDING_STATE_RIDER_DOCS_EXAMPLE, { message: 'Mode switched' })
+  @ApiValidationError('Finish your 1 active delivery before switching to ordering.')
+  @ApiUnauthorized()
+  @ApiNotFound('User not found')
+  async switchMode(@CurrentUser('sub') userId: string, @Body() dto: SwitchModeDto) {
+    try {
+      const result = await this.onboardingService.switchMode(userId, dto.accountType as AccountType);
+      return this.response.handle(result, { message: 'Mode switched' });
     } catch (e) {
       return this.response.exception(e);
     }

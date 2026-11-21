@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsEmail,
@@ -24,6 +24,17 @@ export const ONBOARDING_STEPS = [
 ] as const;
 
 export const ACCOUNT_TYPES = ['PASSENGER', 'RIDER'] as const;
+
+export class SwitchModeDto {
+  @ApiProperty({
+    enum: ACCOUNT_TYPES,
+    example: 'RIDER',
+    description:
+      'PASSENGER to order deliveries, RIDER to deliver them. Switching to RIDER the first time starts the rider application.',
+  })
+  @IsEnum(ACCOUNT_TYPES)
+  accountType: (typeof ACCOUNT_TYPES)[number];
+}
 
 export class UpdateOnboardingDto {
   @ApiPropertyOptional({
