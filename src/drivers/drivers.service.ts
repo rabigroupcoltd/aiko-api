@@ -38,6 +38,7 @@ import { StorageService } from '../storage/storage.service';
 import { UploadFile } from '../storage/storage.types';
 import { DriverDebtStatus, driverDebtStatus } from './driver-debt.util';
 import { ListDriversQueryDto, RegisterDriverDto, UpdateDriverDto } from './dto/driver.dto';
+import { missingApplicationPhotos, redactPhotoList } from './identity-documents';
 
 @Injectable()
 export class DriversService {
@@ -90,6 +91,11 @@ export class DriversService {
       if (!dto.vehicleBrand?.trim() && !dto.vehicleModel?.trim()) {
         return badRequest('Tell us the brand of your vehicle');
       }
+
+      // Applies to first submissions and resubmissions alike: a resubmission
+      // replaces every earlier photo, so it must carry the full set again.
+      const missing = missingApplicationPhotos(parsePhotoTypes(dto.photoTypes, files.length));
+      if (missing) return badRequest(missing);
 
       const existing = await this.prisma.driver.findUnique({ where: { userId } });
       if (existing) {
@@ -320,13 +326,19 @@ export class DriversService {
     }
   }
 
-  async listPhotos(driverId: string): Promise<ServiceResult> {
+  async listPhotos(driverId: string, viewer?: JwtUser): Promise<ServiceResult> {
     try {
+      const driver = await this.prisma.driver.findUnique({
+        where: { id: driverId },
+        select: { userId: true },
+      });
+      if (!driver) return notFound('Driver not found');
+
       const photos = await this.prisma.vehiclePhoto.findMany({
         where: { driverId },
         orderBy: { createdAt: 'asc' },
       });
-      return ok(photos);
+      return ok(redactPhotoList(photos, viewer, driver.userId));
     } catch (e) {
       return this.response.errorHandler(e);
     }

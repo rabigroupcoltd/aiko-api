@@ -22,6 +22,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
+import { OptionalJwtAuthGuard } from '../common/optional-jwt.guard';
+import { ERR } from '../common/responses/response.types';
 import { ResponsesService } from '../common/responses/responses.service';
 import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
@@ -48,6 +50,7 @@ import { MAX_VEHICLE_PHOTOS, imageFilePipe, imageUploadOptions } from '../common
 import { DriverLocationDto, NearbyDriversQueryDto } from '../redis/dto/driver-location.dto';
 import { UploadFile } from '../storage/storage.types';
 import { DriversService } from './drivers.service';
+import { redactDriverDocuments } from './identity-documents';
 import {
   BlockDriverDto,
   KycApprovalDto,
@@ -288,15 +291,18 @@ export class DriversController {
   }
 
   @Get()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary: 'List drivers',
-    description: 'Public. Filterable by vehicle type, KYC status and availability.',
+    description:
+      'Public. Filterable by vehicle type, KYC status and availability. Driver licence and national ID images are only included for admins.',
   })
   @ApiOkEnvelope(DRIVER_LIST_EXAMPLE)
   @ApiValidationError('kycStatus must be one of the following values: PENDING, APPROVED, REJECTED')
-  async findAll(@Query() query: ListDriversQueryDto) {
+  async findAll(@Query() query: ListDriversQueryDto, @CurrentUser() viewer?: JwtUser) {
     try {
       const result = await this.driversService.findAll(query);
+      if (result.error === ERR.NONE) result.body = redactDriverDocuments(result.body, viewer);
       return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);
@@ -323,13 +329,19 @@ export class DriversController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get one driver', description: 'Public. Includes wallet, photos and last known location.' })
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary: 'Get one driver',
+    description:
+      'Public. Includes wallet, photos and last known location. Driver licence and national ID images are only included for admins and the driver themselves.',
+  })
   @ApiParam(DRIVER_ID_PARAM)
   @ApiOkEnvelope(DRIVER_DETAIL_EXAMPLE)
   @ApiNotFound('Driver not found')
-  async findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string, @CurrentUser() viewer?: JwtUser) {
     try {
       const result = await this.driversService.findOne(id);
+      if (result.error === ERR.NONE) result.body = redactDriverDocuments(result.body, viewer);
       return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);
@@ -363,13 +375,18 @@ export class DriversController {
   }
 
   @Get(':id/photos')
-  @ApiOperation({ summary: 'List vehicle photos' })
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary: 'List vehicle photos',
+    description:
+      'Driver licence and national ID images are only included for admins and the driver themselves.',
+  })
   @ApiParam(DRIVER_ID_PARAM)
   @ApiOkEnvelope(VEHICLE_PHOTOS_EXAMPLE)
   @ApiNotFound('Driver not found')
-  async listPhotos(@Param('id') id: string) {
+  async listPhotos(@Param('id') id: string, @CurrentUser() viewer?: JwtUser) {
     try {
-      const result = await this.driversService.listPhotos(id);
+      const result = await this.driversService.listPhotos(id, viewer);
       return this.response.handle(result);
     } catch (e) {
       return this.response.exception(e);
