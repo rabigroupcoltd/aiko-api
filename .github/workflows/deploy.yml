@@ -34,7 +34,9 @@ jobs:
         run: npm run build
 
       - name: Package release
-        run: tar -czf release.tgz dist prisma package.json package-lock.json
+        # src + tsconfig are shipped only so `prisma db seed` (ts-node) can
+        # resolve prisma/seed.ts's imports from ../src. The app runs from dist.
+        run: tar -czf release.tgz dist src prisma package.json package-lock.json tsconfig.json
 
       - name: Configure SSH
         env:
